@@ -1,0 +1,33 @@
+# Android / Gradle
+.gradle/
+build/
+**/build/
+local.properties
+*.iml
+.idea/
+
+# Windows / .NET / Visual Studio
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Runtime and local secrets
+.env
+.env.*
+!.env.example
+*.pfx
+*.snk
+*.keystore
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test and coverage output
+TestResults/
+coverage/
+scratch/
