@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">LyricRelay</string>
+    <string name="media_access_title">Media access</string>
+    <string name="media_access_summary">Allow LyricRelay to read the currently playing media session.</string>
+    <string name="relay_channel_name">LyricRelay connection</string>
+    <string name="relay_notification">LyricRelay is sharing playback state with your PC</string>
+</resources>
+

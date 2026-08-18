@@ -61,3 +61,8 @@ seek to 120000ms                            → immediately rebase
 
 在声明 MVP 可用前，核心单元测试和协议测试必须通过；至少完成首批重点播放器中的三种手工验证，并通过连续播放、切歌、暂停和 Seek 场景。任务栏渲染若因 Shell 版本失败，必须降级为不显示，而不是影响连接和歌词核心链路。
 
+## 当前环境验证状态
+
+核心测试入口已经写入 `apps/windows-client/tests`。当前已使用仓库内本地 .NET 8 SDK 执行并通过 17 项 Windows Core 测试，并完成 QQ Music/KuGou 在线 Provider 检查；Windows Client 编译成功；已使用本地 JDK、Gradle 和 Android SDK 35 构建 Android Debug APK。真实设备已用于配对、热点连接和 QQ Music MediaSession 验证；Windows Shell 任务栏歌词和三种真实播放器仍未完成验收。
+
+在线 Provider 检查通过参数 `--online` 运行：网络不可用时输出 `SKIP`，不将环境网络错误误报为测试程序崩溃。

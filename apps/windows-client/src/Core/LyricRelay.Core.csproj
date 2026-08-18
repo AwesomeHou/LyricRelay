@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>LyricRelay.Core</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../../packages/protocol/csharp/LyricRelay.Protocol.csproj" />
+    <Compile Include="../Lyrics/**/*.cs" />
+    <Compile Include="../Timeline/**/*.cs" />
+  </ItemGroup>
+</Project>

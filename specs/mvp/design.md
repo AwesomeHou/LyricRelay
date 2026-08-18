@@ -59,7 +59,7 @@ Parser 输出按 `startMs` 升序排列；Timeline Engine 根据当前毫秒位�
 
 ## 配对策略
 
-Windows 生成短期 QR 信息，内容包含临时地址、端口、协议版本、Windows 设备 ID 和一次性 token。Android 扫描后回传确认；确认成功后双方保存设备绑定信息。服务发现只用于后续找到设备，不能替代凭据校验。
+Windows 生成短期 QR 信息，内容包含临时地址、端口、协议版本、Windows 设备 ID、一次性 token 和服务器证书指纹。Android 扫描后回传确认；确认成功后双方保存设备绑定信息。服务发现只用于后续找到设备，不能替代凭据校验。
 
 实现时必须补齐具体加密/认证方案，并遵守 [安全与隐私](../../docs/security.md) 的已知限制说明。
 
@@ -71,7 +71,7 @@ Windows 生成短期 QR 信息，内容包含临时地址、端口、协议版�
 search(TrackQuery, CancellationToken) -> LyricsResult
 ```
 
-Provider 负责网络请求、来源字段和原始格式转换；上层只接收 `TimedLine[]` 或可区分的失败原因。MVP 先实现一个合规来源，后续通过 Adapter 增加来源，不改变 Timeline Engine。
+Provider 负责网络请求、来源字段和原始格式转换；上层只接收 `TimedLine[]` 或可区分的失败原因。MVP 接入 QQ 音乐、网易云、酷狗和 LRCLIB 四个在线来源，不支持本地歌词文件，不改变 Timeline Engine。
 
 ## 任务栏策略
 
@@ -83,4 +83,3 @@ TaskbarRenderer 对外只接受：当前行、可选下一行、显示设置和�
 - Link 使用本机模拟端覆盖配对、心跳和重连。
 - Provider 使用固定响应夹具，不在单元测试中访问真实服务。
 - Renderer 先测试布局计算和降级逻辑，再做少量 Windows 手工验证。
-

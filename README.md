@@ -19,7 +19,7 @@ MVP 只验证一件事：
 
 ## 当前状态
 
-当前仓库完成了 MVP 的初始化：项目边界、模块目录、跨端消息契约、架构和开发规范已经建立；客户端功能实现将在此骨架上逐步进行。
+当前仓库已落地 MVP 的首版客户端源代码：Android MediaSession 读取与 TLS 发送、Windows TLS 配对/发现、QQ 音乐/网易云/酷狗/LRCLIB 在线 Provider、LRC/时间轴核心和任务栏渲染均已进入工程。Windows Core 测试、Windows Client 编译和 Android Debug APK 构建已通过；当前已用 Android 实体设备完成配对、热点网络连接和 QQ 音乐 MediaSession 状态传输验证。完整 MVP 仍需用实体设备播放可命中歌词的歌曲完成任务栏歌词显示，并继续验证 Shell、Seek、长时间漂移和更多播放器。
 
 ## 仓库结构
 
@@ -44,7 +44,7 @@ LyricRelay/
 - Android：Kotlin，优先使用系统 MediaSession 能力。
 - Windows：C# / .NET，使用 Win32 互操作隔离任务栏渲染。
 - 链路：同一局域网内的设备发现 + 长连接 JSON 消息。
-- 歌词：Windows 侧 Provider Adapter，至少接入一个允许使用的同步歌词来源。
+- 歌词：Windows 侧 Provider Adapter，当前接入 QQ 音乐、网易云音乐、酷狗和 LRCLIB 四个在线来源；暂不支持本地歌词文件。
 - 核心同步：Windows 本地时间轴引擎，手机只发送状态变化和周期性校准点。
 
 具体边界见 [架构文档](docs/architecture.md)，消息格式见 [协议文档](packages/protocol/README.md)。
@@ -63,7 +63,7 @@ LyricRelay/
 
 ## 本地开发
 
-客户端构建工程尚未加入依赖，当前阶段先以协议、核心算法和模块边界为准。后续加入客户端工程后，各端的具体命令分别记录在对应目录的 README 中，根目录不维护会失效的复制命令。
+客户端构建命令分别记录在 [Android Companion README](apps/android-companion/README.md) 和 [Windows Client README](apps/windows-client/README.md) 中；根目录不复制可能失效的命令。
 
 ## MVP 成功标准
 

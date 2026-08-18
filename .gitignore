@@ -1,5 +1,6 @@
 # Android / Gradle
 .gradle/
+.kotlin/
 build/
 **/build/
 local.properties
@@ -30,4 +31,7 @@ Thumbs.db
 # Test and coverage output
 TestResults/
 coverage/
+
+# Local toolchains installed for development verification
+.tools/
 scratch/

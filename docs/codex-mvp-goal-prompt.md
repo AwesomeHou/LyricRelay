@@ -75,7 +75,7 @@ MVP 不传输手机音频，Windows 不播放声音，不要求用户更换播�
 - Windows：C# / .NET，使用 Win32 互操作隔离任务栏集成。
 - 协议：版本化 JSON 消息；跨端字段以 packages/protocol 为唯一来源。
 - 连接：同一局域网服务发现 + 长连接；可使用 WebSocket/TCP 等轻量实现，但必须有认证和加密设计。
-- 歌词：Windows 侧 Provider Adapter；至少接入一个允许使用、可稳定访问的时间轴歌词来源。
+- 歌词：Windows 侧 Provider Adapter；MVP 接入 QQ 音乐、网易云、酷狗和 LRCLIB 四个在线来源，暂不支持本地歌词文件。
 - 测试：核心逻辑使用无平台依赖的自动化测试；平台 UI 使用布局测试和真实 Windows 手工验收。
 
 若 Android minSdk、Windows target 或具体 Provider 未被仓库明确规定：
@@ -124,7 +124,7 @@ MVP 不传输手机音频，Windows 不播放声音，不要求用户更换播�
 - 状态变化立即发送；播放中周期性发送校准点，不发送高频逐帧进度。
 
 阶段 5：Lyrics Provider
-- 选定一个合规来源并实现 Provider Adapter。
+- 实现 QQ 音乐、网易云、酷狗和 LRCLIB Provider，并按播放器包名路由、按失败继续兜底。
 - Provider 只负责查询和格式转换，不把网络细节泄漏给 Timeline Engine。
 - 处理超时、无结果、无时间轴歌词、非法格式、取消旧请求和切歌竞态。
 - 不把未经授权的抓取、硬编码歌词或固定测试歌词作为生产实现。
@@ -407,7 +407,7 @@ E2E-13：至少三种首批重点播放器完成真实设备验证；不能只�
 - Android 和 Windows 工程真实存在且可构建。
 - Android MediaSession → Windows 状态链路真实可用。
 - 设备配对、自动发现、认证、加密、断线重连真实可用。
-- 至少一个合规同步歌词 Provider 真实可用。
+- 至少一个在线 Provider 真实可用；四个 Provider 均有固定响应解析测试。
 - LRC Parser 和 Timeline Engine 自动化测试通过。
 - 播放、暂停、恢复、Seek、切歌、播放器切换和短暂断网均有通过证据。
 - Windows 任务栏真实显示歌词，并通过 DPI、亮暗色、方向和不可用降级验证。
@@ -424,4 +424,3 @@ E2E-13：至少三种首批重点播放器完成真实设备验证；不能只�
 ## 使用说明
 
 建议把上面的代码块作为 Codex 目标模式的初始任务提示词，并让 Codex 在当前 `E:\LyricRelay` 工作区执行。它与仓库现有的 [MVP 需求](../specs/mvp/requirements.md)、[技术设计](../specs/mvp/design.md) 和 [实现任务](../specs/mvp/tasks.md) 保持一致；如果代码实现与文档发生变化，应以实际代码和可验证结果为准同步更新文档。
-

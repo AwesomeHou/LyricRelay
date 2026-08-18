@@ -6,6 +6,7 @@
 - [安全与隐私](security.md)：配对、局域网连接、权限和日志边界。
 - [路线图](roadmap.md)：MVP、V0.2 与后续阶段的范围。
 - [Codex MVP 目标模式提示词](codex-mvp-goal-prompt.md)：用于驱动 Codex 完成 MVP 的完整任务提示词和验收规则。
+- [MVP 验收状态](acceptance/mvp-status.md)：按 A/W/E2E 规则记录当前实现证据和未验证项。
 - [架构决策记录](decisions/0001-lightweight-monorepo.md)：为什么采用轻量单仓库。
 
 需求和任务拆解位于 [`specs/mvp`](../specs/mvp/requirements.md)。

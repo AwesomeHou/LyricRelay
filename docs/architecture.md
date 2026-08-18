@@ -71,7 +71,7 @@ currentPosition = basePosition + (monotonicNow() - baseClock) × speed
 
 ## 连接与恢复
 
-- 配对：Windows 生成短期 QR 信息，Android 扫描后完成一次性确认。
+- 配对：Windows 生成包含临时地址、端口、协议版本、设备 ID、一次性 token 和证书指纹的短期 QR 信息，Android 扫描后完成一次性确认。
 - 发现：同一局域网内使用服务发现；发现结果必须匹配已绑定的设备 ID。
 - 重连：指数退避，设置上限；连接恢复后 Android 主动发送完整状态。
 - 断网：歌词时间轴可以短时继续按本地时钟运行；超过容忍窗口后显示连接状态而不是伪造实时准确性。
@@ -81,15 +81,15 @@ currentPosition = basePosition + (monotonicNow() - baseClock) × speed
 
 任务栏集成是最容易受 Windows Shell 版本影响的部分，必须保持为独立适配器：
 
-1. 定位 `Shell_TrayWnd` 及可承载内容的子区域。
-2. 通过 UI Automation / Win32 获取任务栏布局和可用宽度。
+1. 定位 `Shell_TrayWnd`，创建无焦点、不可点击的任务栏子窗口。
+2. 优先通过 UI Automation 读取任务栏控件边界，计算被占用区域和最大安全间隙；对 Windows 11 的全任务栏 Composition Bridge 做背景过滤，并保留 Win32 子窗口枚举作为兼容性回退。
 3. 按当前 DPI 计算文本区域，避免覆盖托盘和已有任务栏内容。
-4. 使用 DirectWrite/Direct2D 或等价的原生文本绘制能力绘制单行/双行歌词。
+4. 使用原生 WPF 文本控件（由 DirectWrite 支持）绘制单行/双行歌词，不引入 WebView2/Chromium。
 5. 亮色、暗色和任务栏尺寸变化时重新计算颜色与布局。
 
 如果 Shell 结构不可识别，Renderer 应降级为“不显示歌词但不影响连接和歌词获取”，并记录可诊断日志。
 
-实现调研可参考 [ANYNC/TaskbarLyrics](https://github.com/ANYNC/TaskbarLyrics)；该项目只作为技术思路参考，不构成 LyricRelay 的运行时依赖。
+LyricRelay 的任务栏适配层直接采用 [ANYNC/TaskbarLyrics](https://github.com/ANYNC/TaskbarLyrics) 所采用的“Shell_TrayWnd 子窗口 + 可用间隙计算 + 原生轻量渲染”方案；仅保留自己的实现和依赖边界，不复制其代码，也不把它作为运行时依赖。
 
 ## 依赖方向
 

@@ -1,6 +1,6 @@
 # LyricRelay Link Protocol v1
 
-这是 Android Companion 与 Windows Client 之间的语言无关消息契约。MVP 采用同一局域网内的长连接传输；具体传输库由各端决定，消息内容保持 JSON 兼容。
+这是 Android Companion 与 Windows Client 之间的语言无关消息契约。MVP 采用同一局域网内的 TLS 长连接传输；具体 socket 实现由各端决定，消息内容保持 JSON 兼容。
 
 ## 设计原则
 
@@ -31,6 +31,7 @@
 | --- | --- | --- |
 | `link.hello` | 双向 | 协商协议版本和设备能力 |
 | `pairing.confirm` | 双向 | QR 配对确认和设备绑定 |
+| `pairing.accept` | Windows → Android | 返回设备绑定信息 |
 | `track.state` | Android → Windows | 歌曲 Metadata 与播放状态 |
 | `track.cleared` | Android → Windows | 当前没有可用 MediaSession |
 | `link.ping` / `link.pong` | 双向 | 存活检测和延迟诊断 |
@@ -71,3 +72,35 @@
 
 完整示例见 [track-state.json](examples/track-state.json)。协议变更必须增加版本说明，并同时更新 Android、Windows 和测试文档。
 
+## 配对载荷
+
+Windows QR 内容是 URL-safe Base64 编码的 JSON，字段为：
+
+```json
+{
+  "host": "192.168.1.20",
+  "port": 47250,
+  "token": "short-lived-one-time-token",
+  "certificateSha256": "server-certificate-sha256",
+  "windowsDeviceId": "windows-device-id",
+  "expiresAt": "2026-08-12T10:02:00Z"
+}
+```
+
+Android 首次连接在 TLS 通道内发送 `pairing.confirm`：
+
+```json
+{
+  "androidDeviceId": "android-device-id",
+  "token": "short-lived-one-time-token"
+}
+```
+
+Windows 校验 token 后返回 `pairing.accept`，其中的 `deviceKey` 会在 Android Keystore 和 Windows DPAPI 保护下保存。后续 `link.hello` 必须携带 Android 设备 ID 和设备密钥；未知设备、错误密钥、过期 token 和证书指纹不匹配都必须拒绝。
+
+## 传输约束
+
+- 当前实现使用 TLS 1.2/1.3；QR 中的服务器证书 SHA-256 指纹用于 Android 端 pinning。
+- JSON 按行分隔；每行一个 envelope；字段和 payload 不得跨行依赖。
+- 所有时间戳使用 ISO-8601 UTC；播放位置只使用 `positionMs` 和本地单调时钟。
+- 不在协议中传输音频、歌词全文、账号、配对私钥或不必要的设备信息。
