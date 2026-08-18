@@ -4,6 +4,8 @@ import android.media.MediaMetadata
 import android.media.session.MediaController
 import android.media.session.MediaSessionManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.service.notification.NotificationListenerService
 import android.content.ComponentName
@@ -18,6 +20,13 @@ import java.security.MessageDigest
 class MediaNotificationListener : NotificationListenerService() {
     private lateinit var sessionManager: MediaSessionManager
     private var lastPublishedAtElapsedMs = 0L
+    private val refreshHandler = Handler(Looper.getMainLooper())
+    private val periodicRefresh = object : Runnable {
+        override fun run() {
+            publishCurrent()
+            refreshHandler.postDelayed(this, PERIODIC_REFRESH_MS)
+        }
+    }
     private val refreshReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == ACTION_MEDIA_REFRESH) publishCurrent()
@@ -38,9 +47,11 @@ class MediaNotificationListener : NotificationListenerService() {
             @Suppress("DEPRECATION")
             registerReceiver(refreshReceiver, filter)
         }
+        refreshHandler.post(periodicRefresh)
     }
 
     override fun onDestroy() {
+        refreshHandler.removeCallbacks(periodicRefresh)
         unregisterReceiver(refreshReceiver)
         super.onDestroy()
     }
@@ -137,6 +148,7 @@ class MediaNotificationListener : NotificationListenerService() {
         const val ACTION_MEDIA_STATE = "com.lyricrelay.companion.MEDIA_STATE"
         const val ACTION_MEDIA_REFRESH = "com.lyricrelay.companion.MEDIA_REFRESH"
         const val EXTRA_STATE = "state"
+        private const val PERIODIC_REFRESH_MS = 2000L
     }
 }
 

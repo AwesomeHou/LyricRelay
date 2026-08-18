@@ -159,9 +159,9 @@ internal static class TaskbarLayoutFinder
 
         // Windows 11 exposes a composition bridge that covers the entire taskbar.
         // It is a background surface, not an occupied slot, so ignore it here.
-        var coversTaskbar = clipped.Right - clipped.Left >= taskbarWidth * 0.9 &&
-                            clipped.Bottom - clipped.Top >= taskbarHeight * 0.9;
-        if (!coversTaskbar)
+        var isBackgroundSurface = clipped.Right - clipped.Left >= taskbarWidth * 0.2 &&
+                                  clipped.Bottom - clipped.Top >= taskbarHeight * 0.5;
+        if (!isBackgroundSurface)
         {
             occupied.Add(clipped);
         }
