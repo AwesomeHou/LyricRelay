@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
@@ -10,34 +11,119 @@ namespace LyricRelay.Windows;
 
 public sealed class TaskbarRenderer : IDisposable
 {
+    private const long LayoutRefreshIntervalMs = 1000;
+    private const long RetryLayoutIntervalMs = 250;
     private TaskbarOverlayWindow? _window;
+    private TaskbarLayout? _cachedLayout;
+    private long _layoutRefreshAt;
+    private RenderKey? _lastRender;
+    private bool _disposed;
 
     public void Render(TimedLine? current, TimedLine? next, AppSettings settings)
     {
+        if (_disposed) return;
+
         if (!settings.ShowLyrics || current is null || string.IsNullOrWhiteSpace(current.Text))
         {
             Hide();
             return;
         }
 
-        _window ??= new TaskbarOverlayWindow();
-        var layout = TaskbarLayoutFinder.TryGet(_window.Handle);
-        if (layout is null)
+        try
         {
-            Hide();
-            return;
-        }
+            if (_window is null || _window.IsClosed)
+            {
+                _window = new TaskbarOverlayWindow();
+                _cachedLayout = null;
+                _lastRender = null;
+            }
 
-        _window.Update(current.Text, settings.DoubleLine ? next?.Text : null, settings, layout.Value);
+            var now = Environment.TickCount64;
+            if (_cachedLayout is null || now >= _layoutRefreshAt)
+            {
+                _cachedLayout = TaskbarLayoutFinder.TryGet(_window.Handle);
+                _layoutRefreshAt = now + (_cachedLayout is null
+                    ? RetryLayoutIntervalMs
+                    : LayoutRefreshIntervalMs);
+            }
+
+            if (_cachedLayout is null)
+            {
+                Hide();
+                return;
+            }
+
+            var nextText = settings.DoubleLine ? next?.Text : null;
+            var render = new RenderKey(
+                current.Text,
+                nextText,
+                settings.FontFamily,
+                settings.FontSize,
+                settings.FontWeightValue,
+                settings.Color,
+                settings.Alignment);
+            if (_lastRender == render)
+            {
+                return;
+            }
+
+            _window.Update(current.Text, nextText, settings, _cachedLayout.Value);
+            _lastRender = render;
+        }
+        catch (InvalidOperationException)
+        {
+            ResetOverlay();
+        }
+        catch (Win32Exception)
+        {
+            ResetOverlay();
+        }
+        catch (COMException)
+        {
+            ResetOverlay();
+        }
     }
 
-    public void Hide() => _window?.HideOverlay();
+    public void Hide()
+    {
+        _lastRender = null;
+        if (!_disposed && _window is not null && !_window.IsClosed)
+        {
+            _window.HideOverlay();
+        }
+    }
 
     public void Dispose()
     {
-        _window?.Close();
-        _window = null;
+        _disposed = true;
+        ResetOverlay();
     }
+
+    private void ResetOverlay()
+    {
+        var window = _window;
+        _window = null;
+        _cachedLayout = null;
+        _lastRender = null;
+        if (window is null || window.IsClosed) return;
+        try
+        {
+            window.Close();
+        }
+        catch (InvalidOperationException)
+        {
+            // The WPF window can be closed concurrently during application exit.
+        }
+    }
+
+    private readonly record struct RenderKey(
+        string Current,
+        string? Next,
+        string FontFamily,
+        double FontSize,
+        int FontWeight,
+        string Color,
+        string Alignment);
 }
 
 internal readonly record struct TaskbarLayout(
@@ -157,8 +243,8 @@ internal static class TaskbarLayoutFinder
         var clipped = Native.Intersect(candidate, taskbar);
         if (clipped.Right <= clipped.Left || clipped.Bottom <= clipped.Top) return;
 
-        // Windows 11 exposes a composition bridge that covers the entire taskbar.
-        // It is a background surface, not an occupied slot, so ignore it here.
+        // Windows 11 exposes large composition/container surfaces in the UIA tree.
+        // They are backgrounds, not occupied slots, so ignore them here.
         var isBackgroundSurface = clipped.Right - clipped.Left >= taskbarWidth * 0.2 &&
                                   clipped.Bottom - clipped.Top >= taskbarHeight * 0.5;
         if (!isBackgroundSurface)
@@ -240,6 +326,7 @@ internal sealed class TaskbarOverlayWindow : Window
     private readonly TextBlock _text;
     private IntPtr _taskbarHandle;
 
+    public bool IsClosed { get; private set; }
     public IntPtr Handle => new WindowInteropHelper(this).EnsureHandle();
 
     public TaskbarOverlayWindow()
@@ -267,10 +354,13 @@ internal sealed class TaskbarOverlayWindow : Window
             }
         };
         Content = _text;
+        Closed += (_, _) => IsClosed = true;
     }
 
     public void Update(string current, string? next, AppSettings settings, TaskbarLayout layout)
     {
+        if (IsClosed) throw new InvalidOperationException("Taskbar overlay has been closed.");
+
         _text.Text = next is null ? current : $"{current}\n{next}";
         _text.FontFamily = new System.Windows.Media.FontFamily(settings.FontFamily);
         _text.FontSize = settings.FontSize * layout.Dpi / 96d;
@@ -293,6 +383,11 @@ internal sealed class TaskbarOverlayWindow : Window
         }
 
         var handle = new WindowInteropHelper(this).Handle;
+        if (!Native.IsWindow(layout.Handle))
+        {
+            throw new Win32Exception("Windows taskbar handle is no longer valid.");
+        }
+
         if (_taskbarHandle != layout.Handle)
         {
             _taskbarHandle = layout.Handle;
@@ -306,13 +401,11 @@ internal sealed class TaskbarOverlayWindow : Window
         var horizontal = !layout.Vertical;
         if (horizontal)
         {
-            Native.SetWindowPos(handle, IntPtr.Zero, layout.ContentX, layout.ContentY, layout.ContentWidth, layout.ContentHeight,
-                Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW);
+            SetPosition(handle, layout);
         }
         else
         {
-            Native.SetWindowPos(handle, IntPtr.Zero, layout.ContentX, layout.ContentY, layout.ContentWidth, layout.ContentHeight,
-                Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW);
+            SetPosition(handle, layout);
             _text.LayoutTransform = new RotateTransform(layout.ReverseVertical ? -90 : 90);
         }
 
@@ -322,9 +415,18 @@ internal sealed class TaskbarOverlayWindow : Window
         }
     }
 
+    private static void SetPosition(IntPtr handle, TaskbarLayout layout)
+    {
+        if (!Native.SetWindowPos(handle, IntPtr.Zero, layout.ContentX, layout.ContentY, layout.ContentWidth, layout.ContentHeight,
+                Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to position taskbar overlay.");
+        }
+    }
+
     public void HideOverlay()
     {
-        if (IsVisible) Hide();
+        if (!IsClosed && IsVisible) Hide();
     }
 }
 
@@ -361,6 +463,10 @@ internal static class Native
     public static extern bool GetWindowRect(IntPtr handle, out Rect rect);
 
     [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindow(IntPtr handle);
+
+    [DllImport("user32.dll")]
     public static extern IntPtr SetParent(IntPtr child, IntPtr parent);
 
     [DllImport("user32.dll")]
@@ -369,7 +475,7 @@ internal static class Native
     [DllImport("user32.dll")]
     public static extern IntPtr GetWindowLongPtr(IntPtr handle, int index);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetWindowPos(IntPtr handle, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
 

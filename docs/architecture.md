@@ -85,7 +85,8 @@ currentPosition = basePosition + (monotonicNow() - baseClock) × speed
 2. 优先通过 UI Automation 读取任务栏控件边界，计算被占用区域和最大安全间隙；对 Windows 11 的全任务栏 Composition Bridge 做背景过滤，并保留 Win32 子窗口枚举作为兼容性回退。
 3. 按当前 DPI 计算文本区域，避免覆盖托盘和已有任务栏内容。
 4. 使用原生 WPF 文本控件（由 DirectWrite 支持）绘制单行/双行歌词，不引入 WebView2/Chromium。
-5. 亮色、暗色和任务栏尺寸变化时重新计算颜色与布局。
+5. 只有歌词文本、显示设置或布局发生变化时才重绘；UI Automation 布局扫描默认最多每秒一次，避免持续占用 Explorer。
+6. 亮色、暗色和任务栏尺寸变化时重新计算颜色与布局；窗口关闭或 Explorer 重启期间安全隐藏并重建覆盖窗口。
 
 如果 Shell 结构不可识别，Renderer 应降级为“不显示歌词但不影响连接和歌词获取”，并记录可诊断日志。
 

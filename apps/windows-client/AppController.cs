@@ -31,7 +31,7 @@ public sealed class AppController : IAsyncDisposable
         _window = window;
         _renderTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
-            Interval = TimeSpan.FromMilliseconds(100)
+            Interval = TimeSpan.FromMilliseconds(200)
         };
         _renderTimer.Tick += (_, _) => RenderCurrentLine();
         _window.SettingsChanged += (_, _) => SaveSettingsFromWindow();
