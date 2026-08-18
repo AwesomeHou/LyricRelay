@@ -11,15 +11,20 @@ import android.content.IntentFilter
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
+import android.util.Log
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class RelayService : Service() {
     private lateinit var store: PairingStore
     private lateinit var executor: ScheduledExecutorService
     @Volatile private var latest: TrackState? = null
     @Volatile private var latestAtElapsedMs: Long = 0
+    @Volatile private var latestGeneration: Long = 0
+    @Volatile private var forcePending = false
+    private val sendScheduled = AtomicBoolean(false)
     private var lastSentSignature: String? = null
     private var client: LinkClient? = null
 
@@ -27,12 +32,10 @@ class RelayService : Service() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != MediaNotificationListener.ACTION_MEDIA_STATE) return
             val raw = intent.getStringExtra(MediaNotificationListener.EXTRA_STATE) ?: return
-            executor.execute {
-                val parsed = runCatching { TrackState.fromJson(org.json.JSONObject(raw)) }.getOrNull()
-                latest = parsed
-                latestAtElapsedMs = SystemClock.elapsedRealtime()
-                if (parsed == null) sendCleared() else sendLatest(force = true)
-            }
+            latest = runCatching { TrackState.fromJson(org.json.JSONObject(raw)) }.getOrNull()
+            latestAtElapsedMs = SystemClock.elapsedRealtime()
+            latestGeneration++
+            scheduleLatestSend(force = true)
         }
     }
 
@@ -50,7 +53,7 @@ class RelayService : Service() {
             registerReceiver(receiver, filter)
         }
         sendBroadcast(Intent(MediaNotificationListener.ACTION_MEDIA_REFRESH).setPackage(packageName))
-        executor.scheduleAtFixedRate({ sendLatest(force = false) }, 2, 2, TimeUnit.SECONDS)
+        executor.scheduleAtFixedRate({ scheduleLatestSend(force = false) }, 2, 2, TimeUnit.SECONDS)
         executor.execute { connectIfConfigured() }
     }
 
@@ -75,7 +78,14 @@ class RelayService : Service() {
         runCatching {
             val current = client ?: createClient().also { client = it }
             current.sendPing()
-            val source = latest ?: return@runCatching
+            val source = latest ?: run {
+                current.sendCleared()
+                lastSentSignature = null
+                return@runCatching
+            }
+            // MediaNotificationListener reports the position at broadcast
+            // time. Account only for the relay queue/network wait here;
+            // Windows performs the final extrapolation from receive time.
             val elapsed = (SystemClock.elapsedRealtime() - latestAtElapsedMs).coerceAtLeast(0)
             val state = if (source.state == PlaybackStateName.PLAYING) {
                 source.copy(positionMs = source.positionMs + (elapsed * source.playbackSpeed).toLong())
@@ -87,18 +97,25 @@ class RelayService : Service() {
             current.send(state)
             lastSentSignature = signature
         }.onFailure {
+            Log.w(TAG, "send failed: ${it.javaClass.simpleName}: ${it.message}")
             client?.close()
             client = null
         }
     }
 
-    private fun sendCleared() {
-        runCatching {
-            val current = client ?: createClient().also { client = it }
-            current.sendCleared()
-        }.onFailure {
-            client?.close()
-            client = null
+    private fun scheduleLatestSend(force: Boolean) {
+        if (force) forcePending = true
+        if (sendScheduled.compareAndSet(false, true)) {
+            executor.execute {
+                val generation = latestGeneration
+                val shouldForce = forcePending
+                forcePending = false
+                sendLatest(force = shouldForce)
+                sendScheduled.set(false)
+                if (latestGeneration != generation || forcePending) {
+                    scheduleLatestSend(force = false)
+                }
+            }
         }
     }
 
@@ -107,6 +124,7 @@ class RelayService : Service() {
             val current = client ?: createClient().also { client = it }
             current.connect()
         }.onFailure {
+            Log.w(TAG, "connect failed: ${it.javaClass.simpleName}: ${it.message}")
             client?.close()
             client = null
         }
@@ -147,6 +165,7 @@ class RelayService : Service() {
     }
 
     companion object {
+        private const val TAG = "LyricRelay"
         private const val CHANNEL_ID = "lyricrelay.connection"
         private const val NOTIFICATION_ID = 1001
     }

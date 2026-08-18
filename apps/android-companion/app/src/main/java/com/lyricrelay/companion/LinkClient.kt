@@ -4,6 +4,7 @@ import android.util.Base64
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.BufferedWriter
+import java.io.IOException
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.InetSocketAddress
@@ -57,7 +58,11 @@ class LinkClient(private var config: PairingConfig, private val deviceId: String
                 .put("sentAt", java.time.Instant.now().toString())
                 .put("payload", JSONObject())
         )
-        reader?.readLine()
+        val responseLine = reader?.readLine() ?: throw IOException("Windows closed the connection")
+        val response = JSONObject(responseLine)
+        if (response.optString("type") != "link.pong") {
+            throw IOException("Unexpected link response")
+        }
     }
 
     @Synchronized

@@ -18,6 +18,7 @@ public sealed class DeviceLinkServer : IAsyncDisposable
     private readonly PairedDeviceStore _pairedDevices;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentDictionary<TcpClient, string> _clients = new();
+    private readonly ConcurrentDictionary<TcpClient, Task> _clientTasks = new();
     private TcpListener? _listener;
     private Task? _acceptLoop;
 
@@ -34,11 +35,7 @@ public sealed class DeviceLinkServer : IAsyncDisposable
     public event EventHandler<TrackStateReceivedEventArgs>? TrackStateReceived;
     public event EventHandler<string>? StatusChanged;
 
-    public void RefreshStatus()
-    {
-        var deviceId = _clients.Values.FirstOrDefault();
-        StatusChanged?.Invoke(this, deviceId is null ? "等待 Android" : $"设备已连接：{deviceId}");
-    }
+    public void RefreshStatus() => PublishConnectionStatus();
 
     public Task StartAsync(int port = 47250)
     {
@@ -58,7 +55,16 @@ public sealed class DeviceLinkServer : IAsyncDisposable
             while (!cancellationToken.IsCancellationRequested)
             {
                 var client = await _listener!.AcceptTcpClientAsync(cancellationToken);
-                _ = HandleClientAsync(client, cancellationToken);
+                var task = HandleClientAsync(client, cancellationToken);
+                _clientTasks[client] = task;
+                _ = task.ContinueWith(
+                    completedTask =>
+                    {
+                        _clientTasks.TryRemove(client, out var ignored);
+                    },
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -73,92 +79,143 @@ public sealed class DeviceLinkServer : IAsyncDisposable
     {
         using (client)
         {
-        await using var network = client.GetStream();
-        using var ssl = new SslStream(network, leaveInnerStreamOpen: false);
-        try
-        {
-            await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+            await using var network = client.GetStream();
+            using var ssl = new SslStream(network, leaveInnerStreamOpen: false);
+            try
             {
-                ServerCertificate = _certificate,
-                ClientCertificateRequired = false,
-                EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls12 |
-                                      System.Security.Authentication.SslProtocols.Tls13,
-                CertificateRevocationCheckMode = X509RevocationMode.NoCheck
-            }, serverCancellation);
+                using var clientShutdown = CancellationTokenSource.CreateLinkedTokenSource(serverCancellation);
+                clientShutdown.CancelAfter(TimeSpan.FromSeconds(10));
+                var clientCancellation = clientShutdown.Token;
 
-            using var reader = new StreamReader(ssl);
-            await using var writer = new StreamWriter(ssl) { AutoFlush = true, NewLine = "\n" };
-            var firstLine = await reader.ReadLineAsync(serverCancellation);
-            if (string.IsNullOrWhiteSpace(firstLine)) return;
-            var first = JsonSerializer.Deserialize<Envelope<JsonElement>>(firstLine, ProtocolJson.Options);
-            if (first is null) return;
-
-            var deviceId = first.DeviceId;
-            if (first.Type == MessageTypes.PairingConfirm)
-            {
-                await HandlePairingAsync(first, writer, serverCancellation);
-                deviceId = first.Payload.TryGetProperty("androidDeviceId", out var pairingId)
-                    ? pairingId.GetString() ?? string.Empty
-                    : string.Empty;
-            }
-            else if (first.Type == MessageTypes.LinkHello)
-            {
-                if (!AllowKnownConnections || !IsPaired(deviceId, first.Payload))
+                await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
                 {
-                    StatusChanged?.Invoke(this, "拒绝未知 Android 设备");
+                    ServerCertificate = _certificate,
+                    ClientCertificateRequired = false,
+                    EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls12 |
+                                          System.Security.Authentication.SslProtocols.Tls13,
+                    CertificateRevocationCheckMode = X509RevocationMode.NoCheck
+                }, clientCancellation);
+
+                using var reader = new StreamReader(ssl);
+                await using var writer = new StreamWriter(ssl) { AutoFlush = true, NewLine = "\n" };
+                var firstLine = await reader.ReadLineAsync(clientCancellation);
+                if (string.IsNullOrWhiteSpace(firstLine)) return;
+                var first = JsonSerializer.Deserialize<Envelope<JsonElement>>(firstLine, ProtocolJson.Options);
+                if (first is null) return;
+
+                var deviceId = first.DeviceId;
+                if (first.Type == MessageTypes.PairingConfirm)
+                {
+                    await HandlePairingAsync(first, writer, clientCancellation);
+                    deviceId = first.Payload.TryGetProperty("androidDeviceId", out var pairingId)
+                        ? pairingId.GetString() ?? string.Empty
+                        : string.Empty;
+                }
+                else if (first.Type == MessageTypes.LinkHello)
+                {
+                    if (!AllowKnownConnections || !IsPaired(deviceId, first.Payload))
+                    {
+                        PublishConnectionStatus("拒绝未知 Android 设备");
+                        return;
+                    }
+
+                    await WriteAsync(writer, MessageTypes.LinkHello, new { accepted = true }, deviceId, clientCancellation);
+                }
+                else
+                {
                     return;
                 }
 
-                await WriteAsync(writer, MessageTypes.LinkHello, new { accepted = true }, deviceId, serverCancellation);
-            }
-            else
-            {
-                return;
-            }
-
-            _clients[client] = deviceId;
-            StatusChanged?.Invoke(this, $"设备已连接：{deviceId}");
-            while (!serverCancellation.IsCancellationRequested)
-            {
-                var line = await reader.ReadLineAsync(serverCancellation);
-                if (line is null) break;
-                var message = JsonSerializer.Deserialize<Envelope<JsonElement>>(line, ProtocolJson.Options);
-                if (message is null || message.Version != 1 || message.DeviceId != deviceId) continue;
-                switch (message.Type)
+                clientShutdown.CancelAfter(Timeout.InfiniteTimeSpan);
+                foreach (var existing in _clients.Where(pair => pair.Value == deviceId && pair.Key != client).ToArray())
                 {
-                    case MessageTypes.TrackState:
-                        var state = message.Payload.Deserialize<TrackState>(ProtocolJson.Options);
-                        if (state is not null && state.IsValid(out _))
-                        {
-                            TrackStateReceived?.Invoke(this, new TrackStateReceivedEventArgs(state));
-                        }
-                        break;
-                    case MessageTypes.LinkPing:
-                        await WriteAsync(writer, MessageTypes.LinkPong, new { }, deviceId, serverCancellation);
-                        break;
-                    case MessageTypes.TrackCleared:
-                        TrackStateReceived?.Invoke(this, new TrackStateReceivedEventArgs(null));
-                        break;
+                    if (_clients.TryRemove(existing.Key, out _))
+                    {
+                        existing.Key.Close();
+                    }
+                }
+
+                _clients[client] = deviceId;
+                PublishConnectionStatus();
+                while (!serverCancellation.IsCancellationRequested)
+                {
+                    var line = await reader.ReadLineAsync(serverCancellation);
+                    if (line is null) break;
+                    var message = JsonSerializer.Deserialize<Envelope<JsonElement>>(line, ProtocolJson.Options);
+                    if (message is null || message.Version != 1 || message.DeviceId != deviceId) continue;
+                    switch (message.Type)
+                    {
+                        case MessageTypes.TrackState:
+                            var state = message.Payload.Deserialize<TrackState>(ProtocolJson.Options);
+                            if (state is not null && state.IsValid(out _))
+                            {
+                                PublishTrackState(state);
+                            }
+                            break;
+                        case MessageTypes.LinkPing:
+                            await WriteAsync(writer, MessageTypes.LinkPong, new { }, deviceId, serverCancellation);
+                            break;
+                        case MessageTypes.TrackCleared:
+                            PublishTrackState(null);
+                            break;
+                    }
                 }
             }
-        }
-        catch (OperationCanceledException) when (serverCancellation.IsCancellationRequested)
-        {
-        }
-        catch (IOException)
-        {
-            StatusChanged?.Invoke(this, "设备连接已断开");
-        }
-        catch (AuthenticationException)
-        {
-            StatusChanged?.Invoke(this, "TLS 认证失败");
-        }
-        catch (JsonException)
-        {
-            StatusChanged?.Invoke(this, "收到无效协议消息");
-        }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (IOException)
+            {
+            }
+            catch (AuthenticationException)
+            {
+                PublishConnectionStatus("TLS 认证失败");
+            }
+            catch (JsonException)
+            {
+                PublishConnectionStatus("收到无效协议消息");
+            }
+            catch (Exception)
+            {
+                // A UI/provider subscriber must not fault the socket handler.
+                PublishConnectionStatus("连接处理异常");
+            }
         }
         _clients.TryRemove(client, out _);
+        if (!serverCancellation.IsCancellationRequested)
+        {
+            PublishConnectionStatus();
+        }
+    }
+
+    private void PublishConnectionStatus(string? fallback = null)
+    {
+        var deviceId = _clients.Values.FirstOrDefault(id => !string.IsNullOrWhiteSpace(id));
+        try
+        {
+            StatusChanged?.Invoke(
+                this,
+                deviceId is null ? fallback ?? "等待 Android" : $"设备已连接：{deviceId}");
+        }
+        catch (Exception)
+        {
+            // Status rendering is best effort and must not terminate a client.
+        }
+    }
+
+    private void PublishTrackState(TrackState? state)
+    {
+        try
+        {
+            TrackStateReceived?.Invoke(this, new TrackStateReceivedEventArgs(state));
+        }
+        catch (Exception)
+        {
+            // A subscriber runs on the UI boundary; keep the network loop alive.
+        }
     }
 
     private async Task HandlePairingAsync(
@@ -176,7 +233,7 @@ public sealed class DeviceLinkServer : IAsyncDisposable
         var deviceId = deviceElement.GetString() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(deviceId) || !_pairing.TryConsume(token))
         {
-            StatusChanged?.Invoke(this, "拒绝无效或过期的配对请求");
+            PublishConnectionStatus("拒绝无效或过期的配对请求");
             throw new AuthenticationException("invalid pairing token");
         }
 
@@ -219,10 +276,18 @@ public sealed class DeviceLinkServer : IAsyncDisposable
     {
         _shutdown.Cancel();
         _listener?.Stop();
+        foreach (var client in _clientTasks.Keys)
+        {
+            client.Close();
+        }
         if (_acceptLoop is not null)
         {
             try { await _acceptLoop; } catch (OperationCanceledException) { }
         }
+
+        var clientTasks = _clientTasks.Values.ToArray();
+        try { await Task.WhenAll(clientTasks); } catch (OperationCanceledException) { }
+        catch (IOException) { }
 
         _shutdown.Dispose();
     }

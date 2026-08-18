@@ -37,7 +37,7 @@ Android 只发送最小必要信息，不传输音频和歌词正文。
 - `LyricsCatalog`：根据歌曲信息查询 Provider，管理取消、超时和结果去重。
 - `LyricsParser`：解析 LRC 时间标签，生成有序时间轴。
 - `TimelineEngine`：基于最近一次手机状态和本地单调时钟推导当前行。
-- `TaskbarRenderer`：将当前行绘制到任务栏可用区域，隔离 Win32/UI Automation/DPI 细节。
+- `TaskbarRenderer`：将当前行绘制到任务栏可用区域，隔离 Win32/DPI 细节。
 - `Settings`：仅保存 MVP 设置，不引入账号或云同步。
 
 ## 关键时序
@@ -82,11 +82,11 @@ currentPosition = basePosition + (monotonicNow() - baseClock) × speed
 任务栏集成是最容易受 Windows Shell 版本影响的部分，必须保持为独立适配器：
 
 1. 定位 `Shell_TrayWnd`，创建无焦点、不可点击的任务栏子窗口。
-2. 优先通过 UI Automation 读取任务栏控件边界，计算被占用区域和最大安全间隙；对 Windows 11 的全任务栏 Composition Bridge 做背景过滤，并保留 Win32 子窗口枚举作为兼容性回退。
+2. 只通过 Win32 子窗口枚举读取任务栏占用区域，避免在 Explorer UI 树上做完整 UI Automation 扫描。
 3. 按当前 DPI 计算文本区域，避免覆盖托盘和已有任务栏内容。
-4. 使用原生 WPF 文本控件（由 DirectWrite 支持）绘制单行/双行歌词，不引入 WebView2/Chromium。
-5. 只有歌词文本、显示设置或布局发生变化时才重绘；UI Automation 布局扫描默认最多每秒一次，避免持续占用 Explorer。
-6. 亮色、暗色和任务栏尺寸变化时重新计算颜色与布局；窗口关闭或 Explorer 重启期间安全隐藏并重建覆盖窗口。
+4. 使用当前进程内的轻量 Win32 子窗口和 GDI 文本绘制单行/双行歌词，不引入 WebView2/Chromium，也不把 WPF 窗口跨进程挂入 Explorer。
+5. 只有歌词文本、显示设置或布局发生变化时才重绘；任务栏布局默认最多每秒刷新一次。
+6. 亮色、暗色和任务栏尺寸变化时重新计算颜色与布局；窗口句柄失效或 Explorer 重启期间安全隐藏并重建原生子窗口。
 
 如果 Shell 结构不可识别，Renderer 应降级为“不显示歌词但不影响连接和歌词获取”，并记录可诊断日志。
 

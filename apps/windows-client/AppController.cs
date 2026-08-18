@@ -65,8 +65,8 @@ public sealed class AppController : IAsyncDisposable
         _pairing = new PairingManager(_settings.DeviceId, certificate);
         _linkServer = new DeviceLinkServer(certificate, _pairing, _pairedDeviceStore);
         _linkServer.AllowKnownConnections = _settings.AutoConnect;
-        _linkServer.StatusChanged += (_, status) => _window.Dispatcher.Invoke(() => _window.SetConnection(status));
-        _linkServer.TrackStateReceived += (_, args) => _window.Dispatcher.InvokeAsync(() => HandleTrackStateAsync(args.State));
+        _linkServer.StatusChanged += (_, status) => DispatchConnectionStatus(status);
+        _linkServer.TrackStateReceived += (_, args) => DispatchTrackState(args.State);
         await _linkServer.StartAsync();
 
         RefreshPairing();
@@ -78,7 +78,7 @@ public sealed class AppController : IAsyncDisposable
             await _discovery.StartAsync();
         }
         _renderTimer.Start();
-        _window.SetConnection($"监听端口 {_linkServer.Port}，等待 Android");
+        _linkServer.RefreshStatus();
         if (Environment.GetCommandLineArgs().Any(argument => argument.Equals("--background", StringComparison.OrdinalIgnoreCase)))
         {
             _window.Hide();
@@ -124,15 +124,53 @@ public sealed class AppController : IAsyncDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
+        catch (Exception)
+        {
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                _window.SetLyrics("歌词加载失败");
+            }
+        }
+    }
+
+    private void DispatchConnectionStatus(string status)
+    {
+        try
+        {
+            if (_window.Dispatcher.HasShutdownStarted || _window.Dispatcher.HasShutdownFinished) return;
+            _window.Dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() => _window.SetConnection(status)));
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private void DispatchTrackState(TrackState? state)
+    {
+        try
+        {
+            if (_window.Dispatcher.HasShutdownStarted || _window.Dispatcher.HasShutdownFinished) return;
+            _window.Dispatcher.BeginInvoke(
+                DispatcherPriority.Background,
+                new Action(() => _ = HandleTrackStateAsync(state)));
+        }
+        catch (InvalidOperationException)
+        {
+        }
     }
 
     private static string TrackContext(TrackState state)
     {
+        // QQ Music can expose the changing lyric fragment as TITLE. Android's
+        // QQ adapter derives TrackId from the normalized metadata, so the
+        // title must not make an otherwise unchanged request look like a new
+        // song on every media-session update.
         var metadata = $"{state.PackageName}|{state.Artist}|{state.Album}|{state.DurationMs}";
-        var isQqMetadataAdapterCase = string.Equals(state.PackageName, QqMusicProvider.PackageName, StringComparison.OrdinalIgnoreCase) &&
-                                      !string.IsNullOrWhiteSpace(state.Artist) &&
-                                      state.Artist.Contains('-', StringComparison.Ordinal);
-        return isQqMetadataAdapterCase ? metadata : $"{metadata}|{state.Title}";
+        return string.Equals(state.PackageName, "com.tencent.qqmusic", StringComparison.OrdinalIgnoreCase)
+            ? metadata
+            : $"{metadata}|{state.Title}";
     }
 
     private void RefreshPairing()

@@ -324,7 +324,6 @@ internal static class TaskbarLayoutFinder
 internal sealed class TaskbarOverlayWindow : Window
 {
     private readonly TextBlock _text;
-    private IntPtr _taskbarHandle;
 
     public bool IsClosed { get; private set; }
     public IntPtr Handle => new WindowInteropHelper(this).EnsureHandle();
@@ -335,6 +334,7 @@ internal sealed class TaskbarOverlayWindow : Window
         ResizeMode = ResizeMode.NoResize;
         ShowInTaskbar = false;
         ShowActivated = false;
+        Topmost = true;
         AllowsTransparency = true;
         Background = System.Windows.Media.Brushes.Transparent;
         IsHitTestVisible = false;
@@ -388,15 +388,9 @@ internal sealed class TaskbarOverlayWindow : Window
             throw new Win32Exception("Windows taskbar handle is no longer valid.");
         }
 
-        if (_taskbarHandle != layout.Handle)
-        {
-            _taskbarHandle = layout.Handle;
-            Native.SetParent(handle, layout.Handle);
-            var style = Native.GetWindowLongPtr(handle, Native.GWL_STYLE).ToInt64();
-            Native.SetWindowLongPtr(handle, Native.GWL_STYLE, new IntPtr((style | Native.WS_CHILD | Native.WS_VISIBLE) & ~Native.WS_POPUP));
-            var exStyle = Native.GetWindowLongPtr(handle, Native.GWL_EXSTYLE).ToInt64();
-            Native.SetWindowLongPtr(handle, Native.GWL_EXSTYLE, new IntPtr(exStyle | Native.WS_EX_NOACTIVATE | Native.WS_EX_TOOLWINDOW | Native.WS_EX_TRANSPARENT));
-        }
+        var exStyle = Native.GetWindowLongPtr(handle, Native.GWL_EXSTYLE).ToInt64();
+        Native.SetWindowLongPtr(handle, Native.GWL_EXSTYLE,
+            new IntPtr(exStyle | Native.WS_EX_NOACTIVATE | Native.WS_EX_TOOLWINDOW | Native.WS_EX_TRANSPARENT));
 
         var horizontal = !layout.Vertical;
         if (horizontal)
@@ -417,7 +411,14 @@ internal sealed class TaskbarOverlayWindow : Window
 
     private static void SetPosition(IntPtr handle, TaskbarLayout layout)
     {
-        if (!Native.SetWindowPos(handle, IntPtr.Zero, layout.ContentX, layout.ContentY, layout.ContentWidth, layout.ContentHeight,
+        if (!Native.GetWindowRect(layout.Handle, out var taskbarRect))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to read taskbar position.");
+        }
+
+        var screenX = taskbarRect.Left + layout.ContentX;
+        var screenY = taskbarRect.Top + layout.ContentY;
+        if (!Native.SetWindowPos(handle, Native.HWND_TOPMOST, screenX, screenY, layout.ContentWidth, layout.ContentHeight,
                 Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW))
         {
             throw new Win32Exception(Marshal.GetLastWin32Error(), "Unable to position taskbar overlay.");
@@ -452,6 +453,7 @@ internal static class Native
     public const long WS_EX_TRANSPARENT = 0x00000020;
     public const uint SWP_NOACTIVATE = 0x0010;
     public const uint SWP_SHOWWINDOW = 0x0040;
+    public static readonly IntPtr HWND_TOPMOST = new(-1);
 
     public delegate bool EnumWindowsProc(IntPtr handle, IntPtr lParam);
 

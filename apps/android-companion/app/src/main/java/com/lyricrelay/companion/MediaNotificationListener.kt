@@ -20,6 +20,7 @@ import java.security.MessageDigest
 class MediaNotificationListener : NotificationListenerService() {
     private lateinit var sessionManager: MediaSessionManager
     private var lastPublishedAtElapsedMs = 0L
+    private val registeredControllers = mutableMapOf<String, MediaController>()
     private val refreshHandler = Handler(Looper.getMainLooper())
     private val periodicRefresh = object : Runnable {
         override fun run() {
@@ -52,6 +53,10 @@ class MediaNotificationListener : NotificationListenerService() {
 
     override fun onDestroy() {
         refreshHandler.removeCallbacks(periodicRefresh)
+        registeredControllers.values.forEach { controller ->
+            runCatching { controller.unregisterCallback(callback) }
+        }
+        registeredControllers.clear()
         unregisterReceiver(refreshReceiver)
         super.onDestroy()
     }
@@ -61,7 +66,8 @@ class MediaNotificationListener : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: android.service.notification.StatusBarNotification) {
-        publishCurrentThrottled()
+        // MediaController callbacks and the periodic calibration are enough.
+        // Scanning on every notification also reacts to unrelated apps.
     }
 
     private fun publishCurrentThrottled() {
@@ -76,10 +82,7 @@ class MediaNotificationListener : NotificationListenerService() {
             sessionManager.getActiveSessions(ComponentName(this, MediaNotificationListener::class.java))
         }.getOrDefault(emptyList())
 
-        controllers.forEach { controller ->
-            runCatching { controller.unregisterCallback(callback) }
-            controller.registerCallback(callback)
-        }
+        synchronizeCallbacks(controllers)
 
         val controller = selectController(controllers)
         val state = controller?.let { toTrackState(it) }
@@ -91,6 +94,30 @@ class MediaNotificationListener : NotificationListenerService() {
         }
         sendBroadcast(intent)
     }
+
+    private fun synchronizeCallbacks(controllers: List<MediaController>) {
+        val activeKeys = controllers.map(::sessionKey).toSet()
+        registeredControllers.keys
+            .filter { it !in activeKeys }
+            .toList()
+            .forEach { key ->
+                registeredControllers.remove(key)?.let { controller ->
+                    runCatching { controller.unregisterCallback(callback) }
+                }
+            }
+
+        controllers.forEach { controller ->
+            val key = sessionKey(controller)
+            if (registeredControllers.containsKey(key)) return@forEach
+            runCatching {
+                controller.registerCallback(callback)
+                registeredControllers[key] = controller
+            }
+        }
+    }
+
+    private fun sessionKey(controller: MediaController): String =
+        "${controller.packageName}:${controller.sessionToken}"
 
     private fun selectController(controllers: List<MediaController>): MediaController? {
         return controllers
@@ -104,10 +131,27 @@ class MediaNotificationListener : NotificationListenerService() {
 
     private fun toTrackState(controller: MediaController): TrackState? {
         val metadata = controller.metadata ?: return null
-        val title = metadata.getString(MediaMetadata.METADATA_KEY_TITLE)?.trim().orEmpty()
-        if (title.isEmpty()) return null
-        val artist = metadata.getString(MediaMetadata.METADATA_KEY_ARTIST)?.trim()
-        val album = metadata.getString(MediaMetadata.METADATA_KEY_ALBUM)?.trim()
+        val description = metadata.description
+        val rawTitle = firstText(
+            metadata.getString(MediaMetadata.METADATA_KEY_TITLE),
+            metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE),
+            description?.title,
+            description?.subtitle
+        ).orEmpty()
+        if (rawTitle.isEmpty()) return null
+        val rawArtist = firstText(
+            metadata.getString(MediaMetadata.METADATA_KEY_ARTIST),
+            metadata.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE),
+            description?.subtitle,
+            description?.description
+        )
+        val normalized = normalizeQqMetadata(controller.packageName, rawTitle, rawArtist)
+        val title = normalized.first
+        val artist = normalized.second
+        val album = firstText(
+            metadata.getString(MediaMetadata.METADATA_KEY_ALBUM),
+            description?.description
+        )
         val duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION).takeIf { it > 0 }
         val playback = controller.playbackState
         val state = when (playback?.state) {
@@ -122,7 +166,10 @@ class MediaNotificationListener : NotificationListenerService() {
         } else {
             basePosition
         }
-        val mediaId = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)?.takeIf { it.isNotBlank() }
+        // QQ Music can reuse or mutate its MediaSession mediaId while the
+        // same song is playing. Use stable metadata for its track identity.
+        val mediaId = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)
+            ?.takeIf { it.isNotBlank() && controller.packageName != QQ_MUSIC_PACKAGE }
         val trackId = mediaId ?: stableTrackId(controller.packageName, title, artist, album, duration)
         return TrackState(
             trackId = trackId,
@@ -144,7 +191,24 @@ class MediaNotificationListener : NotificationListenerService() {
         return digest.joinToString("") { "%02x".format(it) }
     }
 
+    private fun firstText(vararg values: CharSequence?): String? = values
+        .asSequence()
+        .map { it?.toString()?.trim().orEmpty() }
+        .firstOrNull { it.isNotEmpty() }
+
+    private fun normalizeQqMetadata(packageName: String?, title: String, artist: String?): Pair<String, String?> {
+        if (packageName != QQ_MUSIC_PACKAGE || artist.isNullOrBlank()) return title to artist
+
+        // QQ Music may expose the changing lyric fragment as TITLE and put
+        // the stable song title and artist in one hyphenated ARTIST field.
+        val parts = artist.split(Regex("\\s*[-–—]\\s*"), limit = 2)
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+        return if (parts.size == 2) parts[0] to parts[1] else title to artist
+    }
+
     companion object {
+        private const val QQ_MUSIC_PACKAGE = "com.tencent.qqmusic"
         const val ACTION_MEDIA_STATE = "com.lyricrelay.companion.MEDIA_STATE"
         const val ACTION_MEDIA_REFRESH = "com.lyricrelay.companion.MEDIA_REFRESH"
         const val EXTRA_STATE = "state"
