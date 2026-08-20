@@ -20,6 +20,8 @@ import java.security.MessageDigest
 class MediaNotificationListener : NotificationListenerService() {
     private lateinit var sessionManager: MediaSessionManager
     private var lastPublishedAtElapsedMs = 0L
+    private var lastValidStateAtElapsedMs = 0L
+    private var clearPublished = false
     private val registeredControllers = mutableMapOf<String, MediaController>()
     private val refreshHandler = Handler(Looper.getMainLooper())
     private val periodicRefresh = object : Runnable {
@@ -34,7 +36,10 @@ class MediaNotificationListener : NotificationListenerService() {
         }
     }
     private val callback = object : MediaController.Callback() {
-        override fun onPlaybackStateChanged(state: PlaybackState?) = publishCurrentThrottled()
+        // A playback callback represents a control-state change or a seek.
+        // Deliver it immediately so Windows can rebase its monotonic timeline
+        // instead of waiting for the next periodic calibration.
+        override fun onPlaybackStateChanged(state: PlaybackState?) = publishCurrent()
         override fun onMetadataChanged(metadata: MediaMetadata?) = publishCurrentThrottled()
     }
 
@@ -78,6 +83,7 @@ class MediaNotificationListener : NotificationListenerService() {
     }
 
     private fun publishCurrent() {
+        lastPublishedAtElapsedMs = SystemClock.elapsedRealtime()
         val controllers = runCatching {
             sessionManager.getActiveSessions(ComponentName(this, MediaNotificationListener::class.java))
         }.getOrDefault(emptyList())
@@ -87,10 +93,21 @@ class MediaNotificationListener : NotificationListenerService() {
         val controller = selectController(controllers)
         val state = controller?.let { toTrackState(it) }
         val intent = Intent(ACTION_MEDIA_STATE).setPackage(packageName)
-        if (state == null) {
-            intent.putExtra(EXTRA_STATE, JSONObjectState.cleared())
-        } else {
+        if (state != null) {
+            lastValidStateAtElapsedMs = SystemClock.elapsedRealtime()
+            clearPublished = false
             intent.putExtra(EXTRA_STATE, state.toJson().toString())
+        } else if (lastValidStateAtElapsedMs > 0L &&
+            SystemClock.elapsedRealtime() - lastValidStateAtElapsedMs < EMPTY_STATE_GRACE_MS) {
+            // MediaSession metadata can be empty briefly while a player
+            // refreshes its notification. Keep RelayService's last valid
+            // state so Windows can continue extrapolating the timeline.
+            return
+        } else if (clearPublished) {
+            return
+        } else {
+            clearPublished = true
+            intent.putExtra(EXTRA_STATE, JSONObjectState.cleared())
         }
         sendBroadcast(intent)
     }
@@ -213,6 +230,7 @@ class MediaNotificationListener : NotificationListenerService() {
         const val ACTION_MEDIA_REFRESH = "com.lyricrelay.companion.MEDIA_REFRESH"
         const val EXTRA_STATE = "state"
         private const val PERIODIC_REFRESH_MS = 2000L
+        private const val EMPTY_STATE_GRACE_MS = 4000L
     }
 }
 

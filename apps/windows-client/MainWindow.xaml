@@ -2,72 +2,174 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="LyricRelay"
-        Width="520"
-        Height="620"
-        MinWidth="420"
-        MinHeight="520"
-        WindowStartupLocation="CenterScreen">
-    <Grid Margin="24">
+        Width="560"
+        Height="690"
+        MinWidth="460"
+        MinHeight="540"
+        WindowStartupLocation="CenterScreen"
+        Background="#F5F7F6"
+        Foreground="#1F2933"
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <SolidColorBrush x:Key="TextBrush" Color="#1F2933" />
+        <SolidColorBrush x:Key="MutedBrush" Color="#66727D" />
+        <SolidColorBrush x:Key="LineBrush" Color="#D5DDDA" />
+        <SolidColorBrush x:Key="AccentBrush" Color="#0F766E" />
+
+        <Style x:Key="SectionLabel" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+        </Style>
+        <Style x:Key="BodyText" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="SettingCheckBox" TargetType="CheckBox">
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="Padding" Value="6,2,0,2" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+        </Style>
+        <Style x:Key="SecondaryButton" TargetType="Button">
+            <Setter Property="Background" Value="#FFFFFF" />
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Padding" Value="14,8" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#E7F3F1" />
+                    <Setter Property="BorderBrush" Value="#9DCAC3" />
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="Background" Value="#D6EBE7" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="28">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="240" />
+            <RowDefinition Height="230" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-        <TextBlock Grid.Row="0" Text="LyricRelay" FontSize="28" FontWeight="SemiBold" />
-        <TextBlock Grid.Row="1" Margin="0,8,0,16" Text="手机听，电脑看。此窗口只用于配对和设置，歌词显示在 Windows 任务栏。" TextWrapping="Wrap" />
-        <Border Grid.Row="2" BorderBrush="#D0D0D0" BorderThickness="1" Padding="12">
+
+        <Border Grid.Row="0" Margin="0,0,0,18">
+            <StackPanel>
+                <TextBlock Text="Lyric Relay" FontSize="30" FontWeight="Bold" />
+                <TextBlock Text="配对手机后，歌词会显示在 Windows 任务栏。" Style="{StaticResource BodyText}" FontSize="16" Margin="0,8,0,0" />
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="1"
+                Background="#E7F3F1"
+                BorderBrush="#B8D9D4"
+                BorderThickness="1"
+                CornerRadius="12"
+                Padding="14"
+                Margin="0,0,0,16">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="设备状态" Style="{StaticResource SectionLabel}" />
+                    <TextBlock x:Name="ConnectionText" Text="连接：未启动" Margin="0,5,0,0" FontSize="15" FontWeight="SemiBold" />
+                    <TextBlock x:Name="LyricsText" Text="歌词来源：LRCLIB" Style="{StaticResource BodyText}" Margin="0,4,0,0" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="刷新连接" Style="{StaticResource SecondaryButton}" VerticalAlignment="Center" Click="OnRefreshConnection" />
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="2"
+                Background="#FFFFFF"
+                BorderBrush="{StaticResource LineBrush}"
+                BorderThickness="1"
+                CornerRadius="14"
+                Padding="12">
             <Image x:Name="PairingQr" Stretch="Uniform" />
         </Border>
-        <StackPanel Grid.Row="3" Margin="0,16,0,0">
-            <TextBlock x:Name="PairingText" Text="正在生成配对二维码…" TextWrapping="Wrap" />
-            <Button Content="刷新二维码" Width="120" HorizontalAlignment="Left" Margin="0,8,0,0" Click="OnRefreshPairing" />
-            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                <TextBlock x:Name="ConnectionText" VerticalAlignment="Center" Text="连接：未启动" />
-                <Button Content="刷新连接" Margin="12,0,0,0" Padding="10,2" Click="OnRefreshConnection" />
+
+        <Grid Grid.Row="3" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="PairingText"
+                       Text="正在生成配对二维码…"
+                       Style="{StaticResource BodyText}"
+                       VerticalAlignment="Center"
+                       Margin="0,0,12,0" />
+            <Button Grid.Column="1" Content="刷新二维码" Style="{StaticResource SecondaryButton}" Click="OnRefreshPairing" />
+        </Grid>
+
+        <ScrollViewer Grid.Row="4"
+                      Margin="0,20,0,0"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      CanContentScroll="False">
+            <StackPanel>
+                <GroupBox Header="显示与行为" Padding="12" Margin="0,0,0,14">
+                    <StackPanel>
+                        <CheckBox x:Name="ShowLyrics" Content="显示任务栏歌词" IsChecked="True" Style="{StaticResource SettingCheckBox}" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged" />
+                        <CheckBox x:Name="StartWithWindows" Content="开机启动" IsChecked="False" Style="{StaticResource SettingCheckBox}" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged" />
+                        <CheckBox x:Name="AutoConnect" Content="自动连接已配对手机" IsChecked="True" Style="{StaticResource SettingCheckBox}" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged" />
+                        <CheckBox x:Name="DoubleLine" Content="显示下一行歌词" IsChecked="False" Style="{StaticResource SettingCheckBox}" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged" />
+                    </StackPanel>
+                </GroupBox>
+
+                <GroupBox Header="外观" Padding="12">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="130" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Row="0" Text="字号" VerticalAlignment="Center" />
+                        <Slider x:Name="FontSizeSlider" Grid.Row="0" Grid.Column="1" Minimum="10" Maximum="32" Value="16" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="OnSettingsChanged" />
+                        <TextBlock x:Name="FontSizeValue" Grid.Row="0" Grid.Column="2" Margin="12,0,0,0" VerticalAlignment="Center" MinWidth="28" />
+
+                        <TextBlock Grid.Row="1" Text="时间偏移 (ms)" Margin="0,14,0,0" VerticalAlignment="Center" />
+                        <Slider x:Name="OffsetSlider" Grid.Row="1" Grid.Column="1" Margin="0,14,0,0" Minimum="-5000" Maximum="5000" TickFrequency="100" Value="0" ValueChanged="OnSettingsChanged" />
+                        <TextBlock x:Name="OffsetValue" Grid.Row="1" Grid.Column="2" Margin="12,14,0,0" VerticalAlignment="Center" MinWidth="52" />
+
+                        <TextBlock Grid.Row="2" Text="对齐" Margin="0,14,0,0" VerticalAlignment="Center" />
+                        <ComboBox x:Name="AlignmentBox" Grid.Row="2" Grid.Column="1" Margin="0,14,0,0" Width="110" HorizontalAlignment="Left" SelectionChanged="OnSettingsChanged">
+                            <ComboBoxItem Content="Left" />
+                            <ComboBoxItem Content="Center" IsSelected="True" />
+                            <ComboBoxItem Content="Right" />
+                        </ComboBox>
+
+                        <TextBlock Grid.Row="3" Text="字重" Margin="0,14,0,0" VerticalAlignment="Center" />
+                        <ComboBox x:Name="WeightBox" Grid.Row="3" Grid.Column="1" Margin="0,14,0,0" Width="90" HorizontalAlignment="Left" SelectionChanged="OnSettingsChanged">
+                            <ComboBoxItem Content="400" />
+                            <ComboBoxItem Content="600" IsSelected="True" />
+                            <ComboBoxItem Content="700" />
+                        </ComboBox>
+
+                        <TextBlock Grid.Row="4" Text="颜色 / 字体" Margin="0,14,0,0" VerticalAlignment="Center" />
+                        <StackPanel Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" Margin="0,14,0,0">
+                            <TextBox x:Name="ColorBox" Width="100" Text="#FFFFFF" TextChanged="OnSettingsTextChanged" />
+                            <TextBox x:Name="FontFamilyBox" Width="160" Margin="10,0,0,0" Text="Segoe UI" TextChanged="OnSettingsTextChanged" />
+                        </StackPanel>
+                    </Grid>
+                </GroupBox>
             </StackPanel>
-            <TextBlock x:Name="LyricsText" Margin="0,4,0,0" Text="歌词来源：LRCLIB" />
-        </StackPanel>
-        <GroupBox Grid.Row="4" Header="必要设置" Margin="0,20,0,0">
-            <StackPanel Margin="12">
-                <CheckBox x:Name="ShowLyrics" Content="显示任务栏歌词" IsChecked="True" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged" />
-                <CheckBox x:Name="StartWithWindows" Margin="0,8,0,0" Content="开机启动" IsChecked="False" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged" />
-                <CheckBox x:Name="AutoConnect" Margin="0,8,0,0" Content="自动连接已配对手机" IsChecked="True" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged" />
-                <CheckBox x:Name="DoubleLine" Margin="0,8,0,0" Content="显示下一行歌词" IsChecked="False" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged" />
-                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                    <TextBlock VerticalAlignment="Center" Text="字号" />
-                    <Slider x:Name="FontSizeSlider" Margin="12,0,0,0" Width="180" Minimum="10" Maximum="32" Value="16" ValueChanged="OnSettingsChanged" />
-                    <TextBlock x:Name="FontSizeValue" Margin="12,0,0,0" VerticalAlignment="Center" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                    <TextBlock VerticalAlignment="Center" Text="时间偏移 (ms)" />
-                    <Slider x:Name="OffsetSlider" Margin="12,0,0,0" Width="180" Minimum="-5000" Maximum="5000" TickFrequency="100" Value="0" ValueChanged="OnSettingsChanged" />
-                    <TextBlock x:Name="OffsetValue" Margin="12,0,0,0" VerticalAlignment="Center" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                    <TextBlock VerticalAlignment="Center" Text="对齐" />
-                    <ComboBox x:Name="AlignmentBox" Margin="12,0,0,0" Width="100" SelectionChanged="OnSettingsChanged">
-                        <ComboBoxItem Content="Left" />
-                        <ComboBoxItem Content="Center" IsSelected="True" />
-                        <ComboBoxItem Content="Right" />
-                    </ComboBox>
-                    <TextBlock Margin="16,0,0,0" VerticalAlignment="Center" Text="字重" />
-                    <ComboBox x:Name="WeightBox" Margin="8,0,0,0" Width="80" SelectionChanged="OnSettingsChanged">
-                        <ComboBoxItem Content="400" />
-                        <ComboBoxItem Content="600" IsSelected="True" />
-                        <ComboBoxItem Content="700" />
-                    </ComboBox>
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                    <TextBlock VerticalAlignment="Center" Text="颜色" />
-                    <TextBox x:Name="ColorBox" Margin="12,0,0,0" Width="100" Text="#FFFFFF" TextChanged="OnSettingsTextChanged" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                    <TextBlock VerticalAlignment="Center" Text="字体" />
-                    <TextBox x:Name="FontFamilyBox" Margin="12,0,0,0" Width="160" Text="Segoe UI" TextChanged="OnSettingsTextChanged" />
-                </StackPanel>
-            </StackPanel>
-        </GroupBox>
+        </ScrollViewer>
     </Grid>
 </Window>

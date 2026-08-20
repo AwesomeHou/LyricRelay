@@ -23,6 +23,7 @@ public sealed class AppController : IAsyncDisposable
     private LyricsTimeline? _lyrics;
     private LyricsCoordinator? _lyricsCoordinator;
     private CancellationTokenSource? _lyricsCancellation;
+    private CancellationTokenSource? _clearCancellation;
     private string? _currentTrackId;
     private string? _currentTrackContext;
 
@@ -89,13 +90,16 @@ public sealed class AppController : IAsyncDisposable
     {
         if (state is null)
         {
-            _currentTrackId = null;
-            _currentTrackContext = null;
-            _lyrics = null;
-            _lyricsCancellation?.Cancel();
-            _renderer?.Hide();
+            _clearCancellation?.Cancel();
+            _clearCancellation?.Dispose();
+            _clearCancellation = new CancellationTokenSource();
+            _ = ClearAfterGraceAsync(_clearCancellation.Token);
             return;
         }
+
+        _clearCancellation?.Cancel();
+        _clearCancellation?.Dispose();
+        _clearCancellation = null;
 
         if (_timeline is null || _lyricsCoordinator is null) return;
         _timeline.Apply(state);
@@ -131,6 +135,28 @@ public sealed class AppController : IAsyncDisposable
                 _window.SetLyrics("歌词加载失败");
             }
         }
+    }
+
+    private async Task ClearAfterGraceAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Android keeps the last valid state for four seconds while a
+            // player refreshes its MediaSession. Keep a small extra margin
+            // here so the Windows renderer does not flicker in that window.
+            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+
+        if (cancellationToken.IsCancellationRequested) return;
+        _currentTrackId = null;
+        _currentTrackContext = null;
+        _lyrics = null;
+        _lyricsCancellation?.Cancel();
+        _renderer?.Hide();
     }
 
     private void DispatchConnectionStatus(string status)
@@ -279,6 +305,7 @@ public sealed class AppController : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _renderTimer.Stop();
+        _clearCancellation?.Cancel();
         _lyricsCancellation?.Cancel();
         if (_trayIcon is not null)
         {

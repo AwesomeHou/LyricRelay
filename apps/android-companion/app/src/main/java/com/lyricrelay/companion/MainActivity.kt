@@ -5,12 +5,18 @@ import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.view.Gravity
+import android.view.WindowInsets
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import kotlin.math.roundToInt
 
 class MainActivity : Activity() {
     private companion object {
@@ -25,32 +31,83 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pairingStore = PairingStore(this)
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(32, 48, 32, 32)
-            gravity = Gravity.CENTER_HORIZONTAL
+        val root = ScrollView(this).apply {
+            isFillViewport = true
+            setBackgroundColor(Color.rgb(245, 247, 246))
         }
-        root.addView(TextView(this).apply {
-            text = "LyricRelay"
-            textSize = 28f
-            setTextColor(Color.BLACK)
+        val horizontalPadding = dp(24)
+        val topPadding = dp(28)
+        val bottomPadding = dp(24)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(horizontalPadding, topPadding, horizontalPadding, bottomPadding)
+        }
+        root.addView(content, FrameLayout.LayoutParams(-1, -2))
+        root.setOnApplyWindowInsetsListener { _, insets ->
+            val safeInsets = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+            } else {
+                null
+            }
+            val topInset = safeInsets?.top ?: insets.systemWindowInsetTop
+            val bottomInset = safeInsets?.bottom ?: insets.systemWindowInsetBottom
+            content.setPadding(horizontalPadding, topPadding + topInset, horizontalPadding, bottomPadding + bottomInset)
+            insets
+        }
+
+        content.addView(TextView(this).apply {
+            text = "Lyric Relay"
+            textSize = 30f
+            setTextColor(Color.rgb(31, 41, 51))
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
         })
-        root.addView(TextView(this).apply {
-            text = "读取 Android 当前播放状态，并同步到 Windows 任务栏。不会传输音频。"
+        content.addView(TextView(this).apply {
+            text = "授权媒体访问后，扫描 Windows 端二维码即可开始同步。"
             textSize = 16f
-            setPadding(0, 24, 0, 24)
+            setTextColor(Color.rgb(102, 114, 125))
+            setPadding(0, dp(8), 0, 0)
+        }, marginParams(bottom = 22))
+
+        val statusPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(16))
+            background = roundedBackground(Color.rgb(231, 243, 241), Color.rgb(184, 217, 212))
+        }
+        statusPanel.addView(TextView(this).apply {
+            text = "当前状态"
+            textSize = 12f
+            setTextColor(Color.rgb(15, 118, 110))
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
         })
-        status = TextView(this).apply { textSize = 15f }
-        root.addView(status)
-        root.addView(Button(this).apply {
-            text = "打开媒体访问授权"
-            setOnClickListener { startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")) }
+        status = TextView(this).apply {
+            textSize = 15f
+            setTextColor(Color.rgb(31, 41, 51))
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        statusPanel.addView(status, marginParams(top = 6))
+        content.addView(statusPanel, marginParams(bottom = 24))
+
+        content.addView(TextView(this).apply {
+            text = "需要完成"
+            textSize = 12f
+            setTextColor(Color.rgb(15, 118, 110))
+            setTypeface(Typeface.DEFAULT, Typeface.BOLD)
+        }, marginParams(bottom = 8))
+
+        content.addView(primaryButton("打开媒体访问授权") {
+            startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+        }, marginParams(bottom = 10))
+        content.addView(secondaryButton("扫描 Windows 配对二维码") {
+            startQrScanner()
         })
-        root.addView(Button(this).apply {
-            text = "扫描 Windows 配对二维码"
-            setOnClickListener { startQrScanner() }
-        })
+
+        content.addView(TextView(this).apply {
+            text = "仅同步播放状态，不传输手机音频。"
+            textSize = 13f
+            setTextColor(Color.rgb(102, 114, 125))
+        }, marginParams(top = 28))
         setContentView(root)
+        root.requestApplyInsets()
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NotificationPermissionRequest)
@@ -124,4 +181,42 @@ class MainActivity : Activity() {
 
         startActivityForResult(Intent(this, QrScanActivity::class.java), QrScanRequest)
     }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).roundToInt()
+
+    private fun marginParams(top: Int = 0, bottom: Int = 0): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(-1, -2).apply {
+            setMargins(0, dp(top), 0, dp(bottom))
+        }
+
+    private fun roundedBackground(fill: Int, stroke: Int? = null): GradientDrawable =
+        GradientDrawable().apply {
+            setColor(fill)
+            cornerRadius = dp(12).toFloat()
+            if (stroke != null) setStroke(dp(1), stroke)
+        }
+
+    private fun primaryButton(label: String, action: () -> Unit): Button =
+        Button(this).apply {
+            text = label
+            isAllCaps = false
+            textSize = 15f
+            setTextColor(Color.WHITE)
+            minHeight = dp(52)
+            setPadding(dp(16), 0, dp(16), 0)
+            background = roundedBackground(Color.rgb(15, 118, 110))
+            setOnClickListener { action() }
+        }
+
+    private fun secondaryButton(label: String, action: () -> Unit): Button =
+        Button(this).apply {
+            text = label
+            isAllCaps = false
+            textSize = 15f
+            setTextColor(Color.rgb(31, 41, 51))
+            minHeight = dp(52)
+            setPadding(dp(16), 0, dp(16), 0)
+            background = roundedBackground(Color.WHITE, Color.rgb(213, 221, 218))
+            setOnClickListener { action() }
+        }
 }

@@ -15,6 +15,7 @@ public sealed class TaskbarRenderer : IDisposable
     private const long RetryLayoutIntervalMs = 250;
     private TaskbarOverlayWindow? _window;
     private TaskbarLayout? _cachedLayout;
+    private TaskbarLayout? _lastAppliedLayout;
     private long _layoutRefreshAt;
     private RenderKey? _lastRender;
     private bool _disposed;
@@ -35,6 +36,7 @@ public sealed class TaskbarRenderer : IDisposable
             {
                 _window = new TaskbarOverlayWindow();
                 _cachedLayout = null;
+                _lastAppliedLayout = null;
                 _lastRender = null;
             }
 
@@ -62,13 +64,14 @@ public sealed class TaskbarRenderer : IDisposable
                 settings.FontWeightValue,
                 settings.Color,
                 settings.Alignment);
-            if (_lastRender == render)
+            if (_lastRender == render && _lastAppliedLayout == _cachedLayout)
             {
                 return;
             }
 
             _window.Update(current.Text, nextText, settings, _cachedLayout.Value);
             _lastRender = render;
+            _lastAppliedLayout = _cachedLayout.Value;
         }
         catch (InvalidOperationException)
         {
@@ -104,6 +107,7 @@ public sealed class TaskbarRenderer : IDisposable
         var window = _window;
         _window = null;
         _cachedLayout = null;
+        _lastAppliedLayout = null;
         _lastRender = null;
         if (window is null || window.IsClosed) return;
         try
@@ -345,6 +349,7 @@ internal sealed class TaskbarOverlayWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
             HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
             TextWrapping = TextWrapping.NoWrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
             Effect = new System.Windows.Media.Effects.DropShadowEffect
             {
                 BlurRadius = 3,
@@ -365,6 +370,11 @@ internal sealed class TaskbarOverlayWindow : Window
         _text.FontFamily = new System.Windows.Media.FontFamily(settings.FontFamily);
         _text.FontSize = settings.FontSize * layout.Dpi / 96d;
         _text.FontWeight = settings.FontWeight();
+        var scale = Math.Max(1d, layout.Dpi / 96d);
+        var logicalWidth = (layout.Vertical ? layout.ContentHeight : layout.ContentWidth) / scale;
+        var logicalHeight = (layout.Vertical ? layout.ContentWidth : layout.ContentHeight) / scale;
+        _text.Width = Math.Max(1d, logicalWidth);
+        _text.Height = Math.Max(1d, logicalHeight);
         _text.TextAlignment = settings.Alignment.ToLowerInvariant() switch
         {
             "left" => TextAlignment.Left,
