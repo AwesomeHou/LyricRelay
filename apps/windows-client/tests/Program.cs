@@ -133,13 +133,15 @@ static void LyricsContextIgnoresDurationJitter()
     };
     var corrected = first with
     {
-        TrackId = "track-2",
         DurationMs = 181000,
         PositionMs = 1500,
         StateVersion = 2
     };
 
     Assert.Equal(TrackIdentity.LyricsContext(first), TrackIdentity.LyricsContext(corrected));
+
+    var differentSong = first with { TrackId = "track-2" };
+    Assert.Equal(false, TrackIdentity.LyricsContext(first) == TrackIdentity.LyricsContext(differentSong));
 }
 
 static void OffsetIsApplied()

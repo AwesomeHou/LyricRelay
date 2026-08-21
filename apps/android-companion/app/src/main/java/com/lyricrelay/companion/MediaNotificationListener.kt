@@ -197,7 +197,7 @@ class MediaNotificationListener : NotificationListenerService() {
         // same song is playing. Use stable metadata for its track identity.
         val mediaId = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)
             ?.takeIf { it.isNotBlank() && controller.packageName != QQ_MUSIC_PACKAGE }
-        val trackId = mediaId ?: stableTrackId(controller.packageName, title, artist, album, duration)
+        val trackId = mediaId ?: stableTrackId(controller.packageName, title, artist, album)
         return TrackState(
             trackId = trackId,
             title = title,
@@ -212,8 +212,10 @@ class MediaNotificationListener : NotificationListenerService() {
         )
     }
 
-    private fun stableTrackId(packageName: String?, title: String, artist: String?, album: String?, durationMs: Long?): String {
-        val input = listOf(packageName, title, artist, album, durationMs?.toString()).joinToString("|")
+    private fun stableTrackId(packageName: String?, title: String, artist: String?, album: String?): String {
+        // Duration can be corrected by a MediaSession after playback starts;
+        // it must not turn the same song into a new lyrics context.
+        val input = listOf(packageName, title, artist, album).joinToString("|")
         val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
         return digest.joinToString("") { "%02x".format(it) }
     }

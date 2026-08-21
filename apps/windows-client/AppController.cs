@@ -110,11 +110,16 @@ public sealed class AppController : IAsyncDisposable
         if (_timeline is null || _lyricsCoordinator is null) return;
         var previousDiagnosticState = _lastDiagnosticState;
         _lastDiagnosticState = state;
+        var projectedPositionBeforeApply = _timeline.GetPositionMs();
+        var incomingPositionDelta = projectedPositionBeforeApply.HasValue
+            ? (long?)(state.PositionMs - projectedPositionBeforeApply.Value)
+            : null;
         var timelineVersionBefore = _timeline.StateVersion;
         _timeline.Apply(state);
         DiagnosticLog.Info(
             "state",
             $"received {DiagnosticLog.StateSummary(state)} changes={DiagnosticLog.StateChanges(previousDiagnosticState, state)} " +
+            $"projectedBefore={projectedPositionBeforeApply?.ToString() ?? "-"} incomingDelta={incomingPositionDelta?.ToString() ?? "-"} " +
             $"timelineVersionBefore={timelineVersionBefore?.ToString() ?? "-"} timelineVersionAfter={_timeline.StateVersion?.ToString() ?? "-"}");
         var trackContext = TrackContext(state);
         // Android may derive a new TrackId when MediaSession metadata is
@@ -263,10 +268,15 @@ public sealed class AppController : IAsyncDisposable
 
         var current = _timeline.GetCurrentLine(_lyrics, _settings.OffsetMs);
         var position = _timeline.GetPositionMs();
+        var nextStart = current is null
+            ? _lyrics.Lines.FirstOrDefault()?.StartMs
+            : _lyrics.Lines.FirstOrDefault(line => line.StartMs > current.StartMs)?.StartMs;
         var renderKey = $"line={DiagnosticLog.LineSummary(current)}";
         LogRenderDiagnostic(
             renderKey,
-            $"render position={position?.ToString() ?? "-"} offset={_settings.OffsetMs} {renderKey}");
+            $"render position={position?.ToString() ?? "-"} offset={_settings.OffsetMs} {renderKey} " +
+            $"nextStart={nextStart?.ToString() ?? "-"} firstStart={_lyrics.Lines.FirstOrDefault()?.StartMs.ToString() ?? "-"} " +
+            $"lastStart={_lyrics.Lines.LastOrDefault()?.StartMs.ToString() ?? "-"} lineCount={_lyrics.Lines.Count}");
         _renderer.Render(current, _settings);
     }
 
