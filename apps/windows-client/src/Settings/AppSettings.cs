@@ -13,7 +13,6 @@ public sealed class AppSettings
     public int OffsetMs { get; set; }
     public string FontFamily { get; set; } = "Segoe UI";
     public int FontWeightValue { get; set; } = 600;
-    public bool DoubleLine { get; set; }
     public string Alignment { get; set; } = "Center";
     public string Color { get; set; } = "#FFFFFF";
 }

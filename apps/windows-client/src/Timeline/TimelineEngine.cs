@@ -16,6 +16,8 @@ public sealed class TimelineEngine
 
     public string? TrackId => _state?.TrackId;
 
+    public long? StateVersion => _state?.StateVersion;
+
     public void Apply(TrackState state)
     {
         if (!state.IsValid(out var error))
@@ -64,4 +66,3 @@ public sealed class TimelineEngine
         return durationMs is null ? result : Math.Min(result, durationMs.Value);
     }
 }
-

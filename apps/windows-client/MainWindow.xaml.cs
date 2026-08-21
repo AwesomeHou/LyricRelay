@@ -18,7 +18,6 @@ public partial class MainWindow : Window
     public bool IsLyricsEnabled => ShowLyrics.IsChecked == true;
     public bool IsStartWithWindowsEnabled => StartWithWindows.IsChecked == true;
     public bool IsAutoConnectEnabled => AutoConnect.IsChecked == true;
-    public bool IsDoubleLineEnabled => DoubleLine.IsChecked == true;
     public double SelectedFontSize => FontSizeSlider.Value;
     public int SelectedOffsetMs => (int)Math.Round(OffsetSlider.Value);
     public string SelectedAlignment => (AlignmentBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString() ?? "Center";
@@ -47,7 +46,6 @@ public partial class MainWindow : Window
         ShowLyrics.IsChecked = settings.ShowLyrics;
         StartWithWindows.IsChecked = settings.StartWithWindows;
         AutoConnect.IsChecked = settings.AutoConnect;
-        DoubleLine.IsChecked = settings.DoubleLine;
         FontSizeSlider.Value = settings.FontSize;
         OffsetSlider.Value = settings.OffsetMs;
         AlignmentBox.SelectedItem = AlignmentBox.Items

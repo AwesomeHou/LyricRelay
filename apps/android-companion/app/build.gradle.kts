@@ -3,10 +3,19 @@ plugins {
     kotlin("android")
 }
 
-val compatibleDebugStoreFile = providers.gradleProperty("lyricrelayDebugStoreFile").orNull
+val configuredDebugStoreFile = providers.gradleProperty("lyricrelayDebugStoreFile").orNull
+val stableDebugStoreFile = configuredDebugStoreFile?.let(::file)
+    ?: rootProject.file("signing/lyricrelay-debug.keystore")
 val compatibleDebugStorePassword = providers.gradleProperty("lyricrelayDebugStorePassword").orElse("android").get()
 val compatibleDebugKeyAlias = providers.gradleProperty("lyricrelayDebugKeyAlias").orElse("androiddebugkey").get()
 val compatibleDebugKeyPassword = providers.gradleProperty("lyricrelayDebugKeyPassword").orElse("android").get()
+
+if (!stableDebugStoreFile.isFile) {
+    throw GradleException(
+        "Missing stable Android debug keystore at ${stableDebugStoreFile.absolutePath}. " +
+            "Restore that file or set lyricrelayDebugStoreFile to the backed-up keystore."
+    )
+}
 
 android {
     namespace = "com.lyricrelay.companion"
@@ -16,8 +25,8 @@ android {
         applicationId = "com.lyricrelay.companion"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = providers.gradleProperty("lyricrelayVersionCode").map(String::toInt).orElse(2).get()
+        versionName = providers.gradleProperty("lyricrelayVersionName").orElse("0.1.1").get()
     }
 
     buildFeatures {
@@ -33,18 +42,16 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    if (!compatibleDebugStoreFile.isNullOrBlank()) {
-        signingConfigs {
-            create("compatibleDebug") {
-                storeFile = file(compatibleDebugStoreFile)
-                storePassword = compatibleDebugStorePassword
-                keyAlias = compatibleDebugKeyAlias
-                keyPassword = compatibleDebugKeyPassword
-            }
+    signingConfigs {
+        create("compatibleDebug") {
+            storeFile = stableDebugStoreFile
+            storePassword = compatibleDebugStorePassword
+            keyAlias = compatibleDebugKeyAlias
+            keyPassword = compatibleDebugKeyPassword
         }
-        buildTypes.getByName("debug") {
-            signingConfig = signingConfigs.getByName("compatibleDebug")
-        }
+    }
+    buildTypes.getByName("debug") {
+        signingConfig = signingConfigs.getByName("compatibleDebug")
     }
 }
 

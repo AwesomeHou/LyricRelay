@@ -58,7 +58,18 @@ public sealed class QqMusicProvider : ILyricsProvider
             lyricResponse.EnsureSuccessStatusCode();
             using var lyricJson = JsonDocument.Parse(await lyricResponse.Content.ReadAsStringAsync(cancellationToken));
             var encoded = lyricJson.RootElement.TryGetProperty("lyric", out var lyric) ? lyric.GetString() : null;
-            return LyricsProviderSupport.ParseLrc(LyricsProviderSupport.DecodeBase64(encoded), Name);
+            var encodedTranslation = lyricJson.RootElement.TryGetProperty("trans", out var translation)
+                ? translation.GetString()
+                : null;
+            var translatedLrc = LyricsProviderSupport.DecodeBase64(encodedTranslation);
+            if (string.IsNullOrWhiteSpace(translatedLrc) && candidate.Value.SongId is > 0)
+            {
+                translatedLrc = await TryLoadDownloadedTranslationAsync(candidate.Value.SongId.Value, cancellationToken);
+            }
+            return LyricsProviderSupport.ParseLrc(
+                LyricsProviderSupport.DecodeBase64(encoded),
+                Name,
+                translatedLrc);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -80,11 +91,51 @@ public sealed class QqMusicProvider : ILyricsProvider
         return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
     }
 
+    private async Task<string?> TryLoadDownloadedTranslationAsync(long songId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "https://c.y.qq.com/qqmusic/fcgi-bin/lyric_download.fcg")
+            {
+                Content = new FormUrlEncodedContent(new Dictionary<string, string>
+                {
+                    ["version"] = "15",
+                    ["miniversion"] = "82",
+                    ["lrctype"] = "4",
+                    ["musicid"] = songId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                })
+            };
+            request.Headers.Referrer = new Uri("https://c.y.qq.com/");
+            request.Headers.UserAgent.ParseAdd("LyricRelay/0.1");
+            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode) return null;
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            return ExtractCData(body, "contentts");
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (HttpRequestException)
+        {
+            return null;
+        }
+    }
+
+    private static string? ExtractCData(string payload, string elementName)
+    {
+        var pattern = $@"(?s)<{Regex.Escape(elementName)}\b[^>]*><!\[CDATA\[(.*?)\]\]></{Regex.Escape(elementName)}>";
+        var match = Regex.Match(payload, pattern, RegexOptions.CultureInvariant);
+        return match.Success ? match.Groups[1].Value.Trim() : null;
+    }
+
     private static Candidate? CreateCandidate(JsonElement item, TrackQuery query)
     {
         var title = GetString(item, "songname");
         var songMid = GetString(item, "songmid");
         if (string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(songMid)) return null;
+        var songId = GetLong(item, "songid");
         var artist = item.TryGetProperty("singer", out var singers) && singers.ValueKind == JsonValueKind.Array
             ? string.Join(",", singers.EnumerateArray().Select(singer => GetString(singer, "name")).Where(name => !string.IsNullOrWhiteSpace(name)))
             : null;
@@ -93,7 +144,7 @@ public sealed class QqMusicProvider : ILyricsProvider
         var score = Math.Max(
             LyricsProviderSupport.Score(query, title, artist, album, durationMs),
             LyricsProviderSupport.ScorePlayerMetadataFallback(query, title, artist, album, durationMs));
-        return new Candidate(songMid, score);
+        return new Candidate(songMid, songId, score);
     }
 
     private static IEnumerable<TrackQuery> BuildSearchQueries(TrackQuery query)
@@ -120,5 +171,5 @@ public sealed class QqMusicProvider : ILyricsProvider
     private static long? GetLong(JsonElement element, string name) =>
         element.TryGetProperty(name, out var value) && value.TryGetInt64(out var number) ? number : null;
 
-    private readonly record struct Candidate(string SongMid, int Score);
+    private readonly record struct Candidate(string SongMid, long? SongId, int Score);
 }

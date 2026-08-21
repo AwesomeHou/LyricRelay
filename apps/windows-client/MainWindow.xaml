@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="LyricRelay"
+        Icon="/lyricrelay.ico"
         Width="560"
         Height="690"
         MinWidth="460"
@@ -121,7 +122,6 @@
                         <CheckBox x:Name="ShowLyrics" Content="显示任务栏歌词" IsChecked="True" Style="{StaticResource SettingCheckBox}" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged" />
                         <CheckBox x:Name="StartWithWindows" Content="开机启动" IsChecked="False" Style="{StaticResource SettingCheckBox}" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged" />
                         <CheckBox x:Name="AutoConnect" Content="自动连接已配对手机" IsChecked="True" Style="{StaticResource SettingCheckBox}" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged" />
-                        <CheckBox x:Name="DoubleLine" Content="显示下一行歌词" IsChecked="False" Style="{StaticResource SettingCheckBox}" Checked="OnSettingsChanged" Unchecked="OnSettingsChanged" />
                     </StackPanel>
                 </GroupBox>
 

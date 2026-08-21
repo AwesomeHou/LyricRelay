@@ -47,7 +47,11 @@ public sealed class NetEaseProvider : ILyricsProvider
                       lrcElement.TryGetProperty("lyric", out var lyric)
                 ? lyric.GetString()
                 : null;
-            return LyricsProviderSupport.ParseLrc(lrc, Name);
+            var translatedLrc = lyricJson.RootElement.TryGetProperty("tlyric", out var translatedElement) &&
+                                translatedElement.TryGetProperty("lyric", out var translatedLyric)
+                ? translatedLyric.GetString()
+                : null;
+            return LyricsProviderSupport.ParseLrc(lrc, Name, translatedLrc);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

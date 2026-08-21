@@ -5,14 +5,47 @@ namespace LyricRelay.Core;
 
 public static partial class LrcParser
 {
-    public static LyricsTimeline Parse(string lrc, int offsetMs = 0)
+    public static LyricsTimeline Parse(string lrc, int offsetMs = 0, string? translatedLrc = null)
     {
-        if (string.IsNullOrWhiteSpace(lrc))
+        var lines = ParseLines(lrc, offsetMs);
+        if (lines.Count == 0)
         {
             return new LyricsTimeline(Array.Empty<TimedLine>());
         }
 
+        if (string.IsNullOrWhiteSpace(translatedLrc))
+        {
+            return new LyricsTimeline(lines);
+        }
+
+        var translationsByTimestamp = ParseLines(translatedLrc, offsetMs)
+            .GroupBy(line => line.StartMs)
+            .ToDictionary(group => group.Key, group => new Queue<string>(group.Select(line => line.Text)));
+        if (translationsByTimestamp.Count == 0)
+        {
+            return new LyricsTimeline(lines);
+        }
+
+        var merged = lines.Select(line =>
+        {
+            if (!translationsByTimestamp.TryGetValue(line.StartMs, out var translations) || translations.Count == 0)
+            {
+                return line;
+            }
+
+            return line with { Translation = translations.Dequeue() };
+        });
+        return new LyricsTimeline(merged.ToArray());
+    }
+
+    private static List<TimedLine> ParseLines(string? lrc, int offsetMs)
+    {
         var lines = new List<TimedLine>();
+        if (string.IsNullOrWhiteSpace(lrc))
+        {
+            return lines;
+        }
+
         foreach (var rawLine in lrc.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None))
         {
             var matches = TimeTagRegex().Matches(rawLine);
@@ -39,7 +72,7 @@ public static partial class LrcParser
             }
         }
 
-        return new LyricsTimeline(lines);
+        return lines;
     }
 
     private static bool TryParseTimestamp(string value, out long milliseconds)
@@ -61,4 +94,3 @@ public static partial class LrcParser
     [GeneratedRegex(@"\[(\d{1,3}:\d{1,2}(?:\.\d{1,3})?)\]")]
     private static partial Regex TimeTagRegex();
 }
-

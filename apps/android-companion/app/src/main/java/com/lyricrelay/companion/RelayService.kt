@@ -33,6 +33,7 @@ class RelayService : Service() {
             if (intent.action != MediaNotificationListener.ACTION_MEDIA_STATE) return
             val raw = intent.getStringExtra(MediaNotificationListener.EXTRA_STATE) ?: return
             latest = runCatching { TrackState.fromJson(org.json.JSONObject(raw)) }.getOrNull()
+            RelayDiagnostics.log("relay", "received ${latest?.let(RelayDiagnostics::stateSummary) ?: "invalid-state"}")
             latestAtElapsedMs = SystemClock.elapsedRealtime()
             latestGeneration++
             scheduleLatestSend(force = true)
@@ -92,6 +93,10 @@ class RelayService : Service() {
             } else {
                 source
             }
+            RelayDiagnostics.log(
+                "relay",
+                "send force=$force elapsedMs=$elapsed sourcePosition=${source.positionMs} adjustedPosition=${state.positionMs} ${RelayDiagnostics.stateSummary(state)}"
+            )
             val signature = "${state.trackId}:${state.state}:${state.positionMs}:${state.playbackSpeed}:${state.stateVersion}"
             if (!force && state.state != PlaybackStateName.PLAYING && signature == lastSentSignature) return@runCatching
             current.send(state)

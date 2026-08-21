@@ -40,4 +40,8 @@ app/src/main/java/com/lyricrelay/companion/
 gradle -p apps/android-companion :app:assembleDebug
 ```
 
+Debug APK 使用项目目录中的固定签名文件 `signing/lyricrelay-debug.keystore`，该文件已被 `.gitignore` 忽略，必须单独备份。不要删除或重新生成它，否则 Android 会把 APK 视为不同应用，无法覆盖更新。
+
+如需在另一台开发机继续构建更新，先恢复同一个 keystore；也可以通过 `-PlyricrelayDebugStoreFile=<keystore路径>` 指定备份文件。每次要发布可覆盖安装的新版本时递增 `-PlyricrelayVersionCode`。
+
 Android Debug APK 已在本机成功构建；当前 `adb devices -l` 没有连接实体设备，因此 MediaSession、后台保活、真实播放器和双端链路仍未完成真实设备验收。

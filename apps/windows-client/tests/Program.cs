@@ -10,6 +10,8 @@ if (args.Contains("--online", StringComparer.OrdinalIgnoreCase))
 var tests = new (string Name, Action Run)[]
 {
     ("LRC parses multiple tags and sorts lines", LrcParsesMultipleTags),
+    ("LRC aligns optional translations by timestamp", LrcAlignsTranslations),
+    ("LRC keeps original when translation is absent", LrcKeepsOriginalWithoutTranslation),
     ("Timeline advances with monotonic clock and speed", TimelineAdvances),
     ("Pause freezes position", PauseFreezes),
     ("Seek rebases position", SeekRebases),
@@ -21,11 +23,15 @@ var tests = new (string Name, Action Run)[]
     ("LRCLIB synced lyrics are parsed", LrclibResponseIsParsed),
     ("Provider routes by player package", ProvidersRouteByPackage),
     ("QQ Music response is parsed", QqMusicResponseIsParsed),
+    ("QQ Music translation response is parsed", QqMusicTranslationResponseIsParsed),
+    ("QQ Music downloaded translation response is parsed", QqMusicDownloadedTranslationResponseIsParsed),
     ("NetEase response is parsed", NetEaseResponseIsParsed),
+    ("NetEase translation response is parsed", NetEaseTranslationResponseIsParsed),
     ("KuGou response is parsed", KuGouResponseIsParsed),
     ("Provider failures fall back", ProviderFailuresFallBack),
     ("QQ metadata anomaly can match by album", QqMetadataAnomalyMatches),
-    ("QQ split metadata can recover the real title", QqSplitMetadataMatches)
+    ("QQ split metadata can recover the real title", QqSplitMetadataMatches),
+    ("Lyrics context ignores media-session duration jitter", LyricsContextIgnoresDurationJitter)
 };
 
 foreach (var test in tests)
@@ -41,6 +47,24 @@ static void LrcParsesMultipleTags()
     Assert.Equal(500L, timeline.Lines[0].StartMs);
     Assert.Equal(1200L, timeline.Lines[1].StartMs);
     Assert.Equal(2200L, timeline.Lines[2].StartMs);
+}
+
+static void LrcAlignsTranslations()
+{
+    var timeline = LrcParser.Parse(
+        "[00:01.000] original one\n[00:02.000] original two",
+        translatedLrc: "[00:01.000] 中文一\n[00:02.000] 中文二");
+
+    Assert.Equal("中文一", timeline.Lines[0].Translation);
+    Assert.Equal("中文二", timeline.Lines[1].Translation);
+}
+
+static void LrcKeepsOriginalWithoutTranslation()
+{
+    var timeline = LrcParser.Parse("[00:01.000] original");
+
+    Assert.Equal("original", timeline.Lines[0].Text);
+    Assert.Equal<string?>(null, timeline.Lines[0].Translation);
 }
 
 static void TimelineAdvances()
@@ -98,6 +122,26 @@ static void CurrentLineUsesLastTimestamp()
     Assert.Equal("two", engine.GetCurrentLine(timeline)?.Text);
 }
 
+static void LyricsContextIgnoresDurationJitter()
+{
+    var first = State("track-1", TrackPlaybackState.Playing, 1000, 1, 1, 180000) with
+    {
+        PackageName = "com.tencent.qqmusic",
+        Title = "song",
+        Artist = "artist",
+        Album = "album"
+    };
+    var corrected = first with
+    {
+        TrackId = "track-2",
+        DurationMs = 181000,
+        PositionMs = 1500,
+        StateVersion = 2
+    };
+
+    Assert.Equal(TrackIdentity.LyricsContext(first), TrackIdentity.LyricsContext(corrected));
+}
+
 static void OffsetIsApplied()
 {
     var timeline = LrcParser.Parse("[00:01.000] line", offsetMs: -250);
@@ -149,6 +193,32 @@ static void QqMusicResponseIsParsed()
     Assert.Equal("qq", result.Timeline?.Lines[0].Text);
 }
 
+static void QqMusicTranslationResponseIsParsed()
+{
+    var lyric = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("[00:01.000] Japanese"));
+    var translation = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("[00:01.000] Chinese"));
+    var handler = new QueueHandler(
+        "{\"data\":{\"song\":{\"list\":[{\"songname\":\"title\",\"songmid\":\"mid\",\"albumname\":\"album\",\"interval\":1,\"singer\":[{\"name\":\"artist\"}]}]}}}",
+        $"{{\"lyric\":\"{lyric}\",\"trans\":\"{translation}\"}}");
+    var result = new QqMusicProvider(new HttpClient(handler)).SearchAsync(
+        new TrackQuery("title", "artist", "album", 1000, QqMusicProvider.PackageName), CancellationToken.None).GetAwaiter().GetResult();
+
+    Assert.Equal("Chinese", result.Timeline?.Lines[0].Translation);
+}
+
+static void QqMusicDownloadedTranslationResponseIsParsed()
+{
+    var lyric = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("[00:01.000] English"));
+    var handler = new QueueHandler(
+        "{\"data\":{\"song\":{\"list\":[{\"songname\":\"title\",\"songmid\":\"mid\",\"songid\":42,\"albumname\":\"album\",\"interval\":1,\"singer\":[{\"name\":\"artist\"}]}]}}}",
+        $"{{\"lyric\":\"{lyric}\"}}",
+        "<!-- <command-lable-xwl78-qq-music><lyric><contentts><![CDATA[[00:01.000] Chinese]]></contentts></lyric></command-lable-xwl78-qq-music> -->");
+    var result = new QqMusicProvider(new HttpClient(handler)).SearchAsync(
+        new TrackQuery("title", "artist", "album", 1000, QqMusicProvider.PackageName), CancellationToken.None).GetAwaiter().GetResult();
+
+    Assert.Equal("Chinese", result.Timeline?.Lines[0].Translation);
+}
+
 static void NetEaseResponseIsParsed()
 {
     var handler = new QueueHandler(
@@ -160,6 +230,17 @@ static void NetEaseResponseIsParsed()
     Assert.Equal(true, result.IsSuccess);
     Assert.Equal("NetEase", result.Source);
     Assert.Equal("netease", result.Timeline?.Lines[0].Text);
+}
+
+static void NetEaseTranslationResponseIsParsed()
+{
+    var handler = new QueueHandler(
+        "{\"result\":{\"songs\":[{\"name\":\"title\",\"id\":42,\"duration\":1000,\"artists\":[{\"name\":\"artist\"}],\"album\":{\"name\":\"album\"}}]}}",
+        "{\"lrc\":{\"lyric\":\"[00:01.000] Japanese\"},\"tlyric\":{\"lyric\":\"[00:01.000] Chinese\"}}");
+    var result = new NetEaseProvider(new HttpClient(handler)).SearchAsync(
+        new TrackQuery("title", "artist", "album", 1000, NetEaseProvider.PackageName), CancellationToken.None).GetAwaiter().GetResult();
+
+    Assert.Equal("Chinese", result.Timeline?.Lines[0].Translation);
 }
 
 static void KuGouResponseIsParsed()

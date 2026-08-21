@@ -18,14 +18,17 @@ public sealed class TaskbarRenderer : IDisposable
     private TaskbarLayout? _lastAppliedLayout;
     private long _layoutRefreshAt;
     private RenderKey? _lastRender;
+    private string? _lastDiagnosticKey;
+    private long _nextDiagnosticAt;
     private bool _disposed;
 
-    public void Render(TimedLine? current, TimedLine? next, AppSettings settings)
+    public void Render(TimedLine? current, AppSettings settings)
     {
         if (_disposed) return;
 
         if (!settings.ShowLyrics || current is null || string.IsNullOrWhiteSpace(current.Text))
         {
+            LogDiagnostic($"hide showLyrics={settings.ShowLyrics} current={DiagnosticLog.LineSummary(current)}");
             Hide();
             return;
         }
@@ -34,6 +37,7 @@ public sealed class TaskbarRenderer : IDisposable
         {
             if (_window is null || _window.IsClosed)
             {
+                DiagnosticLog.Info("renderer", "overlay-create");
                 _window = new TaskbarOverlayWindow();
                 _cachedLayout = null;
                 _lastAppliedLayout = null;
@@ -47,42 +51,54 @@ public sealed class TaskbarRenderer : IDisposable
                 _layoutRefreshAt = now + (_cachedLayout is null
                     ? RetryLayoutIntervalMs
                     : LayoutRefreshIntervalMs);
+                LogDiagnostic(_cachedLayout is null
+                    ? "layout-none"
+                    : $"layout x={_cachedLayout.Value.ContentX} y={_cachedLayout.Value.ContentY} width={_cachedLayout.Value.ContentWidth} height={_cachedLayout.Value.ContentHeight} dpi={_cachedLayout.Value.Dpi} vertical={_cachedLayout.Value.Vertical}");
             }
 
             if (_cachedLayout is null)
             {
+                LogDiagnostic("hide reason=layout-unavailable");
                 Hide();
                 return;
             }
 
-            var nextText = settings.DoubleLine ? next?.Text : null;
+            var translationText = string.IsNullOrWhiteSpace(current.Translation) ? null : current.Translation.Trim();
             var render = new RenderKey(
                 current.Text,
-                nextText,
+                translationText,
                 settings.FontFamily,
                 settings.FontSize,
                 settings.FontWeightValue,
                 settings.Color,
                 settings.Alignment);
-            if (_lastRender == render && _lastAppliedLayout == _cachedLayout)
+            if (_lastRender == render && _lastAppliedLayout == _cachedLayout && _window.IsVisible)
             {
                 return;
             }
 
-            _window.Update(current.Text, nextText, settings, _cachedLayout.Value);
+            if (_lastRender == render && _lastAppliedLayout == _cachedLayout)
+            {
+                LogDiagnostic("cache-refresh reason=overlay-not-visible");
+            }
+
+            _window.Update(current.Text, translationText, settings, _cachedLayout.Value);
             _lastRender = render;
             _lastAppliedLayout = _cachedLayout.Value;
         }
-        catch (InvalidOperationException)
+        catch (InvalidOperationException exception)
         {
+            DiagnosticLog.Info("renderer", $"reset exception=InvalidOperationException message={exception.Message}");
             ResetOverlay();
         }
-        catch (Win32Exception)
+        catch (Win32Exception exception)
         {
+            DiagnosticLog.Info("renderer", $"reset exception=Win32Exception message={exception.Message}");
             ResetOverlay();
         }
-        catch (COMException)
+        catch (COMException exception)
         {
+            DiagnosticLog.Info("renderer", $"reset exception=COMException message={exception.Message}");
             ResetOverlay();
         }
     }
@@ -120,9 +136,19 @@ public sealed class TaskbarRenderer : IDisposable
         }
     }
 
+    private void LogDiagnostic(string message)
+    {
+        var key = message;
+        var now = Environment.TickCount64;
+        if (key == _lastDiagnosticKey && now < _nextDiagnosticAt) return;
+        _lastDiagnosticKey = key;
+        _nextDiagnosticAt = now + 1000;
+        DiagnosticLog.Info("renderer", message);
+    }
+
     private readonly record struct RenderKey(
         string Current,
-        string? Next,
+        string? Translation,
         string FontFamily,
         double FontSize,
         int FontWeight,
@@ -327,7 +353,13 @@ internal static class TaskbarLayoutFinder
 
 internal sealed class TaskbarOverlayWindow : Window
 {
-    private readonly TextBlock _text;
+    // Keep the bilingual layout at the size used by the long-line reference image.
+    // This must not depend on the length of the current lyric: short lines otherwise
+    // become too tall and push the translation below the taskbar bounds.
+    private const double BilingualFontScale = 0.6d;
+    private readonly Border _container;
+    private readonly TextBlock _currentText;
+    private readonly TextBlock _translationText;
 
     public bool IsClosed { get; private set; }
     public IntPtr Handle => new WindowInteropHelper(this).EnsureHandle();
@@ -343,13 +375,23 @@ internal sealed class TaskbarOverlayWindow : Window
         Background = System.Windows.Media.Brushes.Transparent;
         IsHitTestVisible = false;
         Focusable = false;
-        _text = new TextBlock
+        _currentText = CreateTextBlock();
+        _translationText = CreateTextBlock();
+        var stack = new StackPanel
         {
-            TextAlignment = TextAlignment.Center,
+            Orientation = System.Windows.Controls.Orientation.Vertical,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        stack.Children.Add(_currentText);
+        stack.Children.Add(_translationText);
+        _container = new Border
+        {
+            Background = System.Windows.Media.Brushes.Transparent,
             VerticalAlignment = VerticalAlignment.Center,
-            HorizontalAlignment = System.Windows.HorizontalAlignment.Center,
-            TextWrapping = TextWrapping.NoWrap,
-            TextTrimming = TextTrimming.CharacterEllipsis,
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
+            Padding = new Thickness(8, 4, 8, 4),
+            Child = stack,
             Effect = new System.Windows.Media.Effects.DropShadowEffect
             {
                 BlurRadius = 3,
@@ -358,34 +400,48 @@ internal sealed class TaskbarOverlayWindow : Window
                 Color = System.Windows.Media.Colors.Black
             }
         };
-        Content = _text;
+        Content = _container;
         Closed += (_, _) => IsClosed = true;
     }
 
-    public void Update(string current, string? next, AppSettings settings, TaskbarLayout layout)
+    public void Update(string current, string? translation, AppSettings settings, TaskbarLayout layout)
     {
         if (IsClosed) throw new InvalidOperationException("Taskbar overlay has been closed.");
 
-        _text.Text = next is null ? current : $"{current}\n{next}";
-        _text.FontFamily = new System.Windows.Media.FontFamily(settings.FontFamily);
-        _text.FontSize = settings.FontSize * layout.Dpi / 96d;
-        _text.FontWeight = settings.FontWeight();
+        var hasTranslation = !string.IsNullOrWhiteSpace(translation);
+        _currentText.Text = current;
+        _translationText.Text = translation ?? string.Empty;
+        _translationText.Visibility = hasTranslation ? Visibility.Visible : Visibility.Collapsed;
+
+        var fontFamily = new System.Windows.Media.FontFamily(settings.FontFamily);
         var scale = Math.Max(1d, layout.Dpi / 96d);
+        var baseFontSize = settings.FontSize * scale;
+        _currentText.FontFamily = fontFamily;
+        _translationText.FontFamily = fontFamily;
+        _currentText.FontWeight = settings.FontWeight();
+        _translationText.FontWeight = FontWeights.Normal;
+        _currentText.Margin = hasTranslation ? new Thickness(0, 0, 0, 4) : new Thickness(0);
         var logicalWidth = (layout.Vertical ? layout.ContentHeight : layout.ContentWidth) / scale;
         var logicalHeight = (layout.Vertical ? layout.ContentWidth : layout.ContentHeight) / scale;
-        _text.Width = Math.Max(1d, logicalWidth);
-        _text.Height = Math.Max(1d, logicalHeight);
-        _text.TextAlignment = settings.Alignment.ToLowerInvariant() switch
+        _container.Width = Math.Max(1d, logicalWidth);
+        _container.Height = Math.Max(1d, logicalHeight);
+        var bilingualFontSize = baseFontSize * BilingualFontScale;
+        _currentText.FontSize = bilingualFontSize * 1.1d;
+        _translationText.FontSize = bilingualFontSize * 0.72d;
+        var alignment = settings.Alignment.ToLowerInvariant() switch
         {
             "left" => TextAlignment.Left,
             "right" => TextAlignment.Right,
             _ => TextAlignment.Center
         };
+        _currentText.TextAlignment = alignment;
+        _translationText.TextAlignment = alignment;
         var color = System.Windows.Media.ColorConverter.ConvertFromString(settings.Color) is System.Windows.Media.Color parsed
             ? parsed
             : System.Windows.Media.Colors.White;
-        _text.Foreground = new System.Windows.Media.SolidColorBrush(color);
-        _text.Opacity = 1;
+        _currentText.Foreground = new System.Windows.Media.SolidColorBrush(color);
+        _translationText.Foreground = new System.Windows.Media.SolidColorBrush(color);
+        _translationText.Opacity = 0.78;
 
         if (!IsVisible)
         {
@@ -410,14 +466,21 @@ internal sealed class TaskbarOverlayWindow : Window
         else
         {
             SetPosition(handle, layout);
-            _text.LayoutTransform = new RotateTransform(layout.ReverseVertical ? -90 : 90);
+            _container.LayoutTransform = new RotateTransform(layout.ReverseVertical ? -90 : 90);
         }
 
         if (horizontal)
         {
-            _text.LayoutTransform = null;
+            _container.LayoutTransform = null;
         }
     }
+
+    private static TextBlock CreateTextBlock() => new()
+    {
+        HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
+        TextWrapping = TextWrapping.NoWrap,
+        TextTrimming = TextTrimming.None
+    };
 
     private static void SetPosition(IntPtr handle, TaskbarLayout layout)
     {

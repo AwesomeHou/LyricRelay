@@ -14,6 +14,7 @@ public sealed class AppController : IAsyncDisposable
     private readonly PairedDeviceStore _pairedDeviceStore = new();
     private readonly DispatcherTimer _renderTimer;
     private System.Windows.Forms.NotifyIcon? _trayIcon;
+    private System.Drawing.Icon? _trayIconResource;
     private AppSettings _settings = new();
     private DeviceLinkServer? _linkServer;
     private PairingManager? _pairing;
@@ -26,6 +27,9 @@ public sealed class AppController : IAsyncDisposable
     private CancellationTokenSource? _clearCancellation;
     private string? _currentTrackId;
     private string? _currentTrackContext;
+    private TrackState? _lastDiagnosticState;
+    private string? _lastRenderDiagnosticKey;
+    private long _nextRenderDiagnosticAt;
 
     public AppController(MainWindow window)
     {
@@ -43,6 +47,7 @@ public sealed class AppController : IAsyncDisposable
     public async Task StartAsync()
     {
         _settings = _settingsStore.Load();
+        DiagnosticLog.Info("startup", $"pid={Environment.ProcessId} diagnostics={DiagnosticLog.FilePath} showLyrics={_settings.ShowLyrics} offset={_settings.OffsetMs}");
         if (string.IsNullOrWhiteSpace(_settings.DeviceId))
         {
             _settings.DeviceId = Guid.NewGuid().ToString("N");
@@ -90,6 +95,7 @@ public sealed class AppController : IAsyncDisposable
     {
         if (state is null)
         {
+            DiagnosticLog.Info("state", "received=cleared; starting clear grace timer");
             _clearCancellation?.Cancel();
             _clearCancellation?.Dispose();
             _clearCancellation = new CancellationTokenSource();
@@ -102,9 +108,24 @@ public sealed class AppController : IAsyncDisposable
         _clearCancellation = null;
 
         if (_timeline is null || _lyricsCoordinator is null) return;
+        var previousDiagnosticState = _lastDiagnosticState;
+        _lastDiagnosticState = state;
+        var timelineVersionBefore = _timeline.StateVersion;
         _timeline.Apply(state);
+        DiagnosticLog.Info(
+            "state",
+            $"received {DiagnosticLog.StateSummary(state)} changes={DiagnosticLog.StateChanges(previousDiagnosticState, state)} " +
+            $"timelineVersionBefore={timelineVersionBefore?.ToString() ?? "-"} timelineVersionAfter={_timeline.StateVersion?.ToString() ?? "-"}");
         var trackContext = TrackContext(state);
-        if (_currentTrackId == state.TrackId && _currentTrackContext == trackContext)
+        // Android may derive a new TrackId when MediaSession metadata is
+        // corrected. The metadata context is the stable identity for lyric
+        // loading; position/state updates still reach TimelineEngine above.
+        var sameTrackContext = _currentTrackContext == trackContext;
+        DiagnosticLog.Info(
+            "context",
+            $"track={DiagnosticLog.Hash(state.TrackId)} context={DiagnosticLog.Hash(trackContext)} same={sameTrackContext} " +
+            $"currentTrack={DiagnosticLog.Hash(_currentTrackId)} currentContext={DiagnosticLog.Hash(_currentTrackContext)}");
+        if (sameTrackContext)
         {
             RenderCurrentLine();
             return;
@@ -113,23 +134,38 @@ public sealed class AppController : IAsyncDisposable
         _currentTrackId = state.TrackId;
         _currentTrackContext = trackContext;
         _lyrics = null;
+        DiagnosticLog.Info("lyrics", $"cleared-before-load track={DiagnosticLog.Hash(state.TrackId)} reason=track-or-context-changed");
         _lyricsCancellation?.Cancel();
         _lyricsCancellation?.Dispose();
         _lyricsCancellation = new CancellationTokenSource();
         var cancellationToken = _lyricsCancellation.Token;
+        var loadStartedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+        DiagnosticLog.Info("lyrics", $"load-start track={DiagnosticLog.Hash(state.TrackId)} context={DiagnosticLog.Hash(trackContext)}");
         try
         {
             var result = await _lyricsCoordinator.LoadAsync(state, cancellationToken);
-            if (cancellationToken.IsCancellationRequested || _currentTrackId != state.TrackId || _currentTrackContext != trackContext) return;
+            var loadElapsedMs = System.Diagnostics.Stopwatch.GetElapsedTime(loadStartedAt).TotalMilliseconds;
+            DiagnosticLog.Info(
+                "lyrics",
+                $"load-end track={DiagnosticLog.Hash(state.TrackId)} context={DiagnosticLog.Hash(trackContext)} elapsedMs={loadElapsedMs:0} " +
+                $"success={result.IsSuccess} source={result.Source ?? "-"} failure={result.Failure} lines={result.Timeline?.Lines.Count ?? 0} " +
+                $"cancelled={cancellationToken.IsCancellationRequested}");
+            if (cancellationToken.IsCancellationRequested || _currentTrackContext != trackContext)
+            {
+                DiagnosticLog.Info("lyrics", $"load-discarded track={DiagnosticLog.Hash(state.TrackId)} reason=stale-request");
+                return;
+            }
             _lyrics = result.Timeline;
             _window.SetLyrics(result.IsSuccess ? result.Source ?? "同步歌词" : $"无同步歌词（{result.Failure}）");
             RenderCurrentLine();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            DiagnosticLog.Info("lyrics", $"load-cancelled track={DiagnosticLog.Hash(state.TrackId)}");
         }
         catch (Exception)
         {
+            DiagnosticLog.Info("lyrics", $"load-exception track={DiagnosticLog.Hash(state.TrackId)}");
             if (!cancellationToken.IsCancellationRequested)
             {
                 _window.SetLyrics("歌词加载失败");
@@ -152,8 +188,10 @@ public sealed class AppController : IAsyncDisposable
         }
 
         if (cancellationToken.IsCancellationRequested) return;
+        DiagnosticLog.Info("state", "clear grace expired; clearing lyrics and renderer");
         _currentTrackId = null;
         _currentTrackContext = null;
+        _lastDiagnosticState = null;
         _lyrics = null;
         _lyricsCancellation?.Cancel();
         _renderer?.Hide();
@@ -189,14 +227,7 @@ public sealed class AppController : IAsyncDisposable
 
     private static string TrackContext(TrackState state)
     {
-        // QQ Music can expose the changing lyric fragment as TITLE. Android's
-        // QQ adapter derives TrackId from the normalized metadata, so the
-        // title must not make an otherwise unchanged request look like a new
-        // song on every media-session update.
-        var metadata = $"{state.PackageName}|{state.Artist}|{state.Album}|{state.DurationMs}";
-        return string.Equals(state.PackageName, "com.tencent.qqmusic", StringComparison.OrdinalIgnoreCase)
-            ? metadata
-            : $"{metadata}|{state.Title}";
+        return TrackIdentity.LyricsContext(state);
     }
 
     private void RefreshPairing()
@@ -224,13 +255,28 @@ public sealed class AppController : IAsyncDisposable
     {
         if (_renderer is null || _timeline is null || _lyrics is null)
         {
+            var missingKey = $"missing:renderer={_renderer is not null};timeline={_timeline is not null};lyrics={_lyrics is not null}";
+            LogRenderDiagnostic(missingKey, $"hide reason={missingKey}");
             _renderer?.Hide();
             return;
         }
 
         var current = _timeline.GetCurrentLine(_lyrics, _settings.OffsetMs);
-        var next = current is null ? null : _lyrics.Lines.FirstOrDefault(line => line.StartMs > current.StartMs);
-        _renderer.Render(current, next, _settings);
+        var position = _timeline.GetPositionMs();
+        var renderKey = $"line={DiagnosticLog.LineSummary(current)}";
+        LogRenderDiagnostic(
+            renderKey,
+            $"render position={position?.ToString() ?? "-"} offset={_settings.OffsetMs} {renderKey}");
+        _renderer.Render(current, _settings);
+    }
+
+    private void LogRenderDiagnostic(string key, string message)
+    {
+        var now = Environment.TickCount64;
+        if (key == _lastRenderDiagnosticKey && now < _nextRenderDiagnosticAt) return;
+        _lastRenderDiagnosticKey = key;
+        _nextRenderDiagnosticAt = now + 1000;
+        DiagnosticLog.Info("render", message);
     }
 
     private void SaveSettingsFromWindow()
@@ -238,7 +284,6 @@ public sealed class AppController : IAsyncDisposable
         _settings.ShowLyrics = _window.IsLyricsEnabled;
         _settings.StartWithWindows = _window.IsStartWithWindowsEnabled;
         _settings.AutoConnect = _window.IsAutoConnectEnabled;
-        _settings.DoubleLine = _window.IsDoubleLineEnabled;
         _settings.FontSize = _window.SelectedFontSize;
         _settings.OffsetMs = _window.SelectedOffsetMs;
         _settings.Alignment = _window.SelectedAlignment;
@@ -265,9 +310,12 @@ public sealed class AppController : IAsyncDisposable
         });
         menu.Items.Add("重启客户端", null, (_, _) => RestartClient());
         menu.Items.Add("退出", null, (_, _) => System.Windows.Application.Current.Shutdown());
+        _trayIconResource = Environment.ProcessPath is { } processPath
+            ? System.Drawing.Icon.ExtractAssociatedIcon(processPath)
+            : null;
         _trayIcon = new System.Windows.Forms.NotifyIcon
         {
-            Icon = System.Drawing.SystemIcons.Application,
+            Icon = _trayIconResource ?? System.Drawing.SystemIcons.Application,
             Text = "LyricRelay",
             ContextMenuStrip = menu,
             Visible = true
@@ -312,6 +360,7 @@ public sealed class AppController : IAsyncDisposable
             _trayIcon.Visible = false;
             _trayIcon.Dispose();
         }
+        _trayIconResource?.Dispose();
         _renderer?.Dispose();
         if (_lyricsCoordinator is not null) await _lyricsCoordinator.DisposeAsync();
         if (_discovery is not null) await _discovery.DisposeAsync();

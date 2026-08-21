@@ -1,6 +1,6 @@
 namespace LyricRelay.Core;
 
-public sealed record TimedLine(long StartMs, string Text);
+public sealed record TimedLine(long StartMs, string Text, string? Translation = null);
 
 public sealed class LyricsTimeline
 {
@@ -30,4 +30,3 @@ public sealed class LyricsTimeline
         return current;
     }
 }
-

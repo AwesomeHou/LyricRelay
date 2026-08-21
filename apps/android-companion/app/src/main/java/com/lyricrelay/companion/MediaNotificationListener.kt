@@ -94,19 +94,23 @@ class MediaNotificationListener : NotificationListenerService() {
         val state = controller?.let { toTrackState(it) }
         val intent = Intent(ACTION_MEDIA_STATE).setPackage(packageName)
         if (state != null) {
+            RelayDiagnostics.log("media", "publish controllers=${controllers.size} ${RelayDiagnostics.stateSummary(state)}")
             lastValidStateAtElapsedMs = SystemClock.elapsedRealtime()
             clearPublished = false
             intent.putExtra(EXTRA_STATE, state.toJson().toString())
         } else if (lastValidStateAtElapsedMs > 0L &&
             SystemClock.elapsedRealtime() - lastValidStateAtElapsedMs < EMPTY_STATE_GRACE_MS) {
+            RelayDiagnostics.log("media", "publish skipped reason=empty-session-within-grace controllers=${controllers.size}")
             // MediaSession metadata can be empty briefly while a player
             // refreshes its notification. Keep RelayService's last valid
             // state so Windows can continue extrapolating the timeline.
             return
         } else if (clearPublished) {
+            RelayDiagnostics.log("media", "publish skipped reason=already-cleared controllers=${controllers.size}")
             return
         } else {
             clearPublished = true
+            RelayDiagnostics.log("media", "publish cleared controllers=${controllers.size}")
             intent.putExtra(EXTRA_STATE, JSONObjectState.cleared())
         }
         sendBroadcast(intent)
@@ -183,6 +187,12 @@ class MediaNotificationListener : NotificationListenerService() {
         } else {
             basePosition
         }
+        RelayDiagnostics.log(
+            "media-raw",
+            "pkg=${controller.packageName} state=$state rawPosition=$basePosition " +
+                "lastUpdateAgeMs=${if ((playback?.lastPositionUpdateTime ?: 0L) > 0L) SystemClock.elapsedRealtime() - playback!!.lastPositionUpdateTime else -1} " +
+                "derivedPosition=$position speed=${"%.3f".format(speed)}"
+        )
         // QQ Music can reuse or mutate its MediaSession mediaId while the
         // same song is playing. Use stable metadata for its track identity.
         val mediaId = metadata.getString(MediaMetadata.METADATA_KEY_MEDIA_ID)

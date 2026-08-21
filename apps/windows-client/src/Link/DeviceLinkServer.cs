@@ -44,6 +44,7 @@ public sealed class DeviceLinkServer : IAsyncDisposable
         _listener.Start();
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
         _acceptLoop = AcceptLoopAsync(_shutdown.Token);
+        DiagnosticLog.Info("link", $"server-start port={Port}");
         StatusChanged?.Invoke(this, $"监听端口 {Port}");
         return Task.CompletedTask;
     }
@@ -149,13 +150,19 @@ public sealed class DeviceLinkServer : IAsyncDisposable
                             var state = message.Payload.Deserialize<TrackState>(ProtocolJson.Options);
                             if (state is not null && state.IsValid(out _))
                             {
+                                DiagnosticLog.Info("link", $"track-state {DiagnosticLog.StateSummary(state)}");
                                 PublishTrackState(state);
+                            }
+                            else
+                            {
+                                DiagnosticLog.Info("link", "track-state rejected reason=invalid");
                             }
                             break;
                         case MessageTypes.LinkPing:
                             await WriteAsync(writer, MessageTypes.LinkPong, new { }, deviceId, serverCancellation);
                             break;
                         case MessageTypes.TrackCleared:
+                            DiagnosticLog.Info("link", "track-cleared");
                             PublishTrackState(null);
                             break;
                     }
@@ -172,14 +179,17 @@ public sealed class DeviceLinkServer : IAsyncDisposable
             }
             catch (AuthenticationException)
             {
+                DiagnosticLog.Info("link", "client-error type=AuthenticationException");
                 PublishConnectionStatus("TLS 认证失败");
             }
             catch (JsonException)
             {
+                DiagnosticLog.Info("link", "client-error type=JsonException");
                 PublishConnectionStatus("收到无效协议消息");
             }
             catch (Exception)
             {
+                DiagnosticLog.Info("link", "client-error type=Exception");
                 // A UI/provider subscriber must not fault the socket handler.
                 PublishConnectionStatus("连接处理异常");
             }

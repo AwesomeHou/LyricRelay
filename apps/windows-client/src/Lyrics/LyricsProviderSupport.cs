@@ -91,10 +91,10 @@ internal static class LyricsProviderSupport
         }
     }
 
-    public static LyricsResult ParseLrc(string? lrc, string source)
+    public static LyricsResult ParseLrc(string? lrc, string source, string? translatedLrc = null)
     {
         if (string.IsNullOrWhiteSpace(lrc)) return LyricsResult.NoSyncedLyrics(source);
-        var timeline = LrcParser.Parse(lrc);
+        var timeline = LrcParser.Parse(lrc, translatedLrc: translatedLrc);
         return timeline.Lines.Count == 0
             ? LyricsResult.Invalid(source)
             : new LyricsResult(timeline, source);
