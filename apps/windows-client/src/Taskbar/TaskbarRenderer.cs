@@ -17,6 +17,7 @@ public sealed class TaskbarRenderer : IDisposable
     private TaskbarLayout? _cachedLayout;
     private TaskbarLayout? _lastAppliedLayout;
     private long _layoutRefreshAt;
+    private long _overlayRefreshAt;
     private RenderKey? _lastRender;
     private string? _lastDiagnosticKey;
     private long _nextDiagnosticAt;
@@ -41,6 +42,7 @@ public sealed class TaskbarRenderer : IDisposable
                 _window = new TaskbarOverlayWindow();
                 _cachedLayout = null;
                 _lastAppliedLayout = null;
+                _overlayRefreshAt = 0;
                 _lastRender = null;
             }
 
@@ -74,6 +76,12 @@ public sealed class TaskbarRenderer : IDisposable
                 settings.Alignment);
             if (_lastRender == render && _lastAppliedLayout == _cachedLayout && _window.IsVisible)
             {
+                if (now >= _overlayRefreshAt)
+                {
+                    _window.RefreshPosition(_cachedLayout.Value);
+                    _overlayRefreshAt = now + LayoutRefreshIntervalMs;
+                    LogDiagnostic("overlay-refresh reason=taskbar-z-order");
+                }
                 return;
             }
 
@@ -85,6 +93,7 @@ public sealed class TaskbarRenderer : IDisposable
             _window.Update(current.Text, translationText, settings, _cachedLayout.Value);
             _lastRender = render;
             _lastAppliedLayout = _cachedLayout.Value;
+            _overlayRefreshAt = now + LayoutRefreshIntervalMs;
         }
         catch (InvalidOperationException exception)
         {
@@ -124,6 +133,7 @@ public sealed class TaskbarRenderer : IDisposable
         _window = null;
         _cachedLayout = null;
         _lastAppliedLayout = null;
+        _overlayRefreshAt = 0;
         _lastRender = null;
         if (window is null || window.IsClosed) return;
         try
@@ -501,6 +511,12 @@ internal sealed class TaskbarOverlayWindow : Window
     public void HideOverlay()
     {
         if (!IsClosed && IsVisible) Hide();
+    }
+
+    public void RefreshPosition(TaskbarLayout layout)
+    {
+        if (IsClosed) throw new InvalidOperationException("Taskbar overlay has been closed.");
+        SetPosition(Handle, layout);
     }
 }
 
